@@ -1,4 +1,4 @@
-# Investment Bot Agentic App 💼
+# Investment Bot Agentic App ✨
 
 Turkish investment advisory bot using FastAPI + Azure OpenAI GPT-5.1 + Next.js with streaming chat and intelligent tool calling.
 
@@ -167,7 +167,7 @@ get_customer_transactions(customer_id, fund_code, transaction_type, ...)
 get_customer_info(customer_id: Optional[str])
 ```
 - Returns customer identity and portfolio
-- Dummy user: Ahmet Yılmaz (CUST_12345)
+- Dummy user (CUST_12345)
 
 ### 4. Fund Comparison Tool
 ```python
@@ -227,7 +227,7 @@ maf-demo-app/
 
 ## 🔐 Security Notes
 
-- **No Authentication**: Currently uses dummy user (Ahmet Yılmaz)
+- **No Authentication**: Currently uses dummy user
 - **No Database**: All data is in-memory and resets on restart
 - **Development Only**: Not production-ready
 - **API Keys**: Keep your `.env` files secure and never commit them

@@ -5,9 +5,9 @@ class DummyUser:
     """Dummy user model for testing without authentication."""
     
     def __init__(self):
-        self.customer_id = "aysen_yilmaz"
-        self.name = "Ayşen Yılmaz"
-        self.email = "aysen.yilmaz@example.com"
+        self.customer_id = "123456789"
+        self.name = "Ada Ulukaya"
+        self.email = "ada.ulukaya@example.com"
         self.phone = "+90 555 123 4567"
         self.registration_date = "2023-01-15"
         self.portfolio = [

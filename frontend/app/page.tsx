@@ -375,11 +375,11 @@ export default function Home() {
           </div>
           <div className="flex items-center space-x-4">
             {user && (
-              <div className="flex items-center space-x-3">
-                <div className="text-right">
+              <div className="flex items-center space-x-3" title={user.name}>
+                {/* <div className="text-right">
                   <div className="font-semibold">{user.name}</div>
-                  {/* <div className={`text-xs ${isDarkMode ? 'text-dark-muted' : 'text-gray-200'}`}>{user.customer_id}</div> */}
-                </div>
+                  <div className={`text-xs ${isDarkMode ? 'text-dark-muted' : 'text-gray-200'}`}>{user.customer_id}</div>
+                </div> */}
                 <svg className="w-10 h-10" viewBox="0 0 40 40">
                   <circle cx="20" cy="20" r="20" fill="white" />
                   <text 
