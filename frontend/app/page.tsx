@@ -3,12 +3,46 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
+function ColoredJson({ data, isDarkMode }: { data: any; isDarkMode: boolean }) {
+  const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  const colorize = (str: string) => {
+    return str.replace(
+      /("(?:[^"\\]|\\.)*")(\s*:)?|\b(true|false|null)\b|(-?\d+\.?\d*(?:[eE][+-]?\d+)?)/g,
+      (match, strVal, colon, boolNull, num) => {
+        if (strVal) {
+          if (colon) {
+            // key
+            const cls = isDarkMode ? 'color:#7dd3fc' : 'color:#0550ae';
+            return `<span style="${cls}">${strVal}</span>${colon}`;
+          }
+          // string value
+          const cls = isDarkMode ? 'color:#86efac' : 'color:#0a3069';
+          return `<span style="${cls}">${strVal}</span>`;
+        }
+        if (boolNull) {
+          const cls = isDarkMode ? 'color:#c4b5fd' : 'color:#6f42c1';
+          return `<span style="${cls}">${match}</span>`;
+        }
+        if (num) {
+          const cls = isDarkMode ? 'color:#fca5a5' : 'color:#0550ae';
+          return `<span style="${cls}">${match}</span>`;
+        }
+        return match;
+      }
+    );
+  };
+  return (
+    <span dangerouslySetInnerHTML={{ __html: colorize(json) }} />
+  );
+}
+
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
   debug?: any;
   toolCalls?: Array<{
+    call_id?: string;
     tool_name: string;
     arguments: any;
     result?: any;
@@ -17,7 +51,7 @@ interface Message {
 }
 
 interface EventData {
-  type: 'message' | 'message_chunk' | 'tool_call' | 'tool_result' | 'thinking' | 'error' | 'done';
+  type: 'message' | 'message_chunk' | 'tool_call' | 'tool_result' | 'thinking' | 'pii_result' | 'error' | 'done';
   data: any;
   debug?: any;
 }
@@ -47,6 +81,7 @@ export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState('gpt-5.1-chat');
+  const [piiMaskingEnabled, setPiiMaskingEnabled] = useState(false);
   const [sessionId] = useState<string>(() => generateSessionId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,11 +96,15 @@ export default function Home() {
     scrollToBottom();
   }, [messages, thinkingMessage, streamingContent]);
 
-  // Load theme preference from localStorage
+  // Load theme and PII preferences from localStorage
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'dark') {
       setIsDarkMode(true);
+    }
+    const savedPii = localStorage.getItem('piiMaskingEnabled');
+    if (savedPii === 'true') {
+      setPiiMaskingEnabled(true);
     }
   }, []);
 
@@ -116,6 +155,7 @@ export default function Home() {
         body: JSON.stringify({
           message: input,
           session_id: sessionId,
+          pii_masking_enabled: piiMaskingEnabled,
         }),
       });
 
@@ -153,9 +193,11 @@ export default function Home() {
                 setThinkingMessage(null);
                 setStreamingContent(prev => prev + event.data.content);
               } else if (event.type === 'tool_call') {
+                const callId = event.debug?.call_id || `tool_${Date.now()}`;
                 setCurrentToolCalls(prev => [
                   ...prev,
                   {
+                    call_id: callId,
                     tool_name: event.data.tool_name,
                     arguments: event.data.arguments,
                     status: event.data.status,
@@ -163,9 +205,10 @@ export default function Home() {
                   },
                 ]);
               } else if (event.type === 'tool_result') {
+                const resultCallId = event.debug?.call_id;
                 setCurrentToolCalls(prev =>
                   prev.map(tc =>
-                    tc.tool_name === event.data.tool_name
+                    (resultCallId && tc.call_id === resultCallId) || (!resultCallId && tc.tool_name === event.data.tool_name)
                       ? { ...tc, result: event.data.result, debug: event.debug, status: 'completed' }
                       : tc
                   )
@@ -254,7 +297,8 @@ export default function Home() {
         },
         body: JSON.stringify({
           message: question,
-          session_id: 'default',
+          session_id: sessionId,
+          pii_masking_enabled: piiMaskingEnabled,
         }),
       });
 
@@ -292,9 +336,11 @@ export default function Home() {
                 setThinkingMessage(null);
                 setStreamingContent(prev => prev + event.data.content);
               } else if (event.type === 'tool_call') {
+                const callId = event.debug?.call_id || `tool_${Date.now()}`;
                 setCurrentToolCalls(prev => [
                   ...prev,
                   {
+                    call_id: callId,
                     tool_name: event.data.tool_name,
                     arguments: event.data.arguments,
                     status: event.data.status,
@@ -302,9 +348,10 @@ export default function Home() {
                   },
                 ]);
               } else if (event.type === 'tool_result') {
+                const resultCallId = event.debug?.call_id;
                 setCurrentToolCalls(prev =>
                   prev.map(tc =>
-                    tc.tool_name === event.data.tool_name
+                    (resultCallId && tc.call_id === resultCallId) || (!resultCallId && tc.tool_name === event.data.tool_name)
                       ? { ...tc, result: event.data.result, debug: event.debug, status: 'completed' }
                       : tc
                   )
@@ -438,6 +485,40 @@ export default function Home() {
             </button>
           </div>
 
+          {/* PII Masking Toggle */}
+          <div className="mb-6">
+            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+              PII Masking
+            </label>
+            <button
+              onClick={() => { const next = !piiMaskingEnabled; setPiiMaskingEnabled(next); localStorage.setItem('piiMaskingEnabled', String(next)); }}
+              className={`w-full p-3 text-left rounded-lg border-2 transition-all duration-200 flex items-center justify-between ${
+                piiMaskingEnabled
+                  ? isDarkMode
+                    ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                    : 'border-primary bg-primary/10 text-primary font-semibold'
+                  : isDarkMode
+                    ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                    : 'border-gray-200 hover:border-primary/50'
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span>Mask PII Data</span>
+              </div>
+              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${
+                piiMaskingEnabled
+                  ? isDarkMode ? 'bg-emerald-400 justify-end' : 'bg-primary justify-end'
+                  : isDarkMode ? 'bg-dark-bg justify-start' : 'bg-gray-300 justify-start'
+              }`}>
+                <div className="w-4 h-4 bg-white rounded-full mx-1 shadow-sm"></div>
+              </div>
+            </button>
+
+          </div>
+
           {/* LLM Model Selection */}
           <div className="mb-6">
             <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
@@ -505,11 +586,17 @@ export default function Home() {
             </div>
           </div>
 
+
+
           {/* Current Selection Info */}
           <div className={`mt-auto p-4 rounded-lg ${isDarkMode ? 'bg-dark-card' : 'bg-gray-100'}`}>
             <div className={`text-xs ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>Current Configuration</div>
-            <div className={`text-sm font-semibold mt-1 ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>
-              Model: {selectedModel}
+            
+            <div className={`text-sm font-semibold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>
+              PII Masking: {piiMaskingEnabled ? 'Enabled' : 'Disabled'}
+            </div>
+            <div className={`text-sm font-semibold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>
+              LLM Model: {selectedModel}
             </div>
             <div className={`text-sm font-semibold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>
               Theme: {isDarkMode ? 'Dark' : 'Light'}
@@ -554,7 +641,7 @@ export default function Home() {
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white flex-shrink-0 ${isDarkMode ? 'bg-dark-card' : 'bg-primary'}`}>
                 🍀
               </div>
-              <div className={`flex-1 rounded-lg p-4 ${isDarkMode ? 'bg-dark-surface' : 'bg-white'}`}>
+              <div className={`flex-1 max-w-[80%] rounded-lg p-4 ${isDarkMode ? 'bg-dark-surface' : 'bg-white'}`}>
                 {/* Show streaming content if available */}
                 {streamingContent ? (
                   <div className={`prose prose-sm max-w-none break-words ${isDarkMode ? 'prose-invert' : ''}`}>
@@ -648,6 +735,7 @@ export default function Home() {
 
 function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: boolean }) {
   const [showDebug, setShowDebug] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const isUser = message.role === 'user';
 
   return (
@@ -687,49 +775,152 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                       <div className="font-semibold mb-2">📊 Response Timeline:</div>
                       
                       {/* Unified Timeline Table */}
-                      {message.debug.timeline_events && message.debug.timeline_events.length > 0 && (
+                      {message.debug.timeline_events && message.debug.timeline_events.length > 0 && (() => {
+                        // Pre-compute timeline bar positions using start_ms from backend
+                        const events = message.debug.timeline_events as any[];
+                        const totalSpan = message.debug.total_request_time_ms || Math.max(...events.map((e: any) => (e.start_ms || 0) + (e.duration_ms || 0))) || 1;
+
+                        return (
                         <div className={`mb-3 rounded border overflow-hidden ${isDarkMode ? 'border-dark-card' : 'border-gray-200'}`}>
-                          <table className="w-full text-xs">
+                          <table className="w-full text-xs table-fixed">
                             <thead>
                               <tr className={isDarkMode ? 'bg-dark-card' : 'bg-gray-100'}>
-                                <th className="text-left px-2 py-1 w-8">#</th>
-                                <th className="text-left px-2 py-1">Event</th>
+                                <th className="text-left px-2 py-1 w-4">#</th>
+                                <th className="text-left px-2 py-1" style={{ width: '40%' }}>Step</th>
+                                <th className="text-left px-2 py-1" style={{ width: '40%' }}>Timeline</th>
                                 <th className="text-right px-2 py-1 w-20">Duration</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {message.debug.timeline_events.map((event: any, idx: number) => (
+                              {events.map((event: any, idx: number) => {
+                                const colorClass = event.event_type === 'llm_request'
+                                  ? (isDarkMode ? 'text-blue-300' : 'text-blue-600')
+                                  : event.event_type === 'pii_masking'
+                                    ? (isDarkMode ? 'text-purple-300' : 'text-purple-600')
+                                    : (isDarkMode ? 'text-orange-300' : 'text-orange-600');
+                                const barColor = event.event_type === 'llm_request'
+                                  ? (isDarkMode ? 'bg-blue-400' : 'bg-blue-500')
+                                  : event.event_type === 'pii_masking'
+                                    ? (isDarkMode ? 'bg-purple-400' : 'bg-purple-500')
+                                    : (isDarkMode ? 'bg-orange-400' : 'bg-orange-500');
+                                const icon = event.event_type === 'llm_request' ? '🔵' : event.event_type === 'pii_masking' ? '🟪' : '🔶';
+                                const hasDetail = event.event_type === 'pii_masking'
+                                  ? !!(message.debug.pii_request_input || message.debug.pii_request_output)
+                                  : !!(event.request_input || event.request_output);
+                                
+                                // Timeline bar position from start_ms offset
+                                const leftPct = ((event.start_ms || 0) / totalSpan) * 100;
+                                const widthPct = Math.max(((event.duration_ms || 0) / totalSpan) * 100, 0.5); // min 0.5% for visibility
+
+                                return (
                                 <tr key={idx} className={`border-t ${isDarkMode ? 'border-dark-card' : 'border-gray-200'}`}>
                                   <td className={`px-2 py-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>{event.order}.</td>
-                                  <td className="px-2 py-1">
-                                    <span className={event.event_type === 'llm_request' ? (isDarkMode ? 'text-blue-300' : 'text-blue-600') : (isDarkMode ? 'text-orange-300' : 'text-orange-600')}>
-                                      {event.event_type === 'llm_request' ? '✨' : '🌐'}
-                                    </span>
+                                  <td className="px-2 py-1 truncate">
+                                    <span className={colorClass}>{icon} </span>
+                                    <span className={`${colorClass} ${isDarkMode ? 'text-dark-text' : ''}`}>{event.label}</span>
                                     {' '}
-                                    <span className={isDarkMode ? 'text-dark-text' : 'text-gray-800'}>{event.label}</span>
+                                    {hasDetail ? (
+                                      
+                                      <button
+                                        onClick={() => {
+                                          if (event.event_type === 'pii_masking') {
+                                            setSelectedEvent({
+                                              label: event.label,
+                                              icon,
+                                              duration_ms: event.duration_ms,
+                                              request_input: message.debug.pii_request_input,
+                                              request_output: message.debug.pii_request_output,
+                                            });
+                                          } else {
+                                            setSelectedEvent(event);
+                                          }
+                                        }}
+                                        className={`cursor-pointer hover:opacity-80 ${colorClass}`}
+                                      >
+                                        🔍
+                                      </button>
+                                    ) : (
+                                      <span className={`${colorClass} ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>{event.label}</span>
+                                    )}
                                   </td>
-                                  <td className={`px-2 py-1 text-right font-mono font-semibold ${isDarkMode ? 'text-primary-lighter' : 'text-primary'}`}>
+                                  <td className="px-2 py-1">
+                                    <div className={`relative w-full h-4 rounded ${isDarkMode ? 'bg-dark-bg/60' : 'bg-gray-200/60'}`}>
+                                      <div
+                                        className={`absolute top-0 h-full rounded ${barColor} opacity-80`}
+                                        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                        title={`${event.duration_ms?.toFixed(0)} ms`}
+                                      />
+                                      {event.stream_start_ms != null && (() => {
+                                        const markerPct = (event.stream_start_ms / totalSpan) * 100;
+                                        const ttft = Math.round(event.stream_start_ms - (event.start_ms || 0));
+                                        return (
+                                          <div
+                                            className="absolute top-0 h-full w-0.5 bg-dark-card z-10"
+                                            style={{ left: `${markerPct}%` }}
+                                            title={`TTFT: ${ttft} ms`}
+                                          />
+                                        );
+                                      })()}
+                                    </div>
+                                  </td>
+                                  <td className={`px-2 py-1 text-right font-mono font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
                                     {event.duration_ms.toFixed(0)} ms
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                           
                           {/* Summary */}
                           <div className={`px-2 py-2 border-t ${isDarkMode ? 'bg-dark-card border-dark-card' : 'bg-gray-100 border-gray-200'}`}>
-                            <div className="flex justify-between mb-1">
-                              <span className={isDarkMode ? 'text-dark-muted' : 'text-gray-600'}>Total LLM Duration:</span>
-                              <span className={`font-mono font-semibold ${isDarkMode ? 'text-blue-300' : 'text-blue-600'}`}>{message.debug.total_llm_time_ms?.toFixed(0)} ms</span>
+                            
+                            <div className="flex justify-between">
+                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-900'}`}>Total Request Duration:</span>
+                              <span className={`font-mono font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-900'}`}>{message.debug.total_request_time_ms?.toFixed(0)} ms</span>
                             </div>
-                            <div className="flex justify-between mb-1">
-                              <span className={isDarkMode ? 'text-dark-muted' : 'text-gray-600'}>Total Tool Duration:</span>
-                              <span className={`font-mono font-semibold ${isDarkMode ? 'text-orange-300' : 'text-orange-600'}`}>{message.debug.total_tool_time_ms?.toFixed(0)} ms</span>
+                            <hr className={`my-2 border ${isDarkMode ? 'border-dark-border' : 'border-gray-300'}`} />
+                            <div className="flex justify-between">
+                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-primary-dark'}`}>Time to First Token:</span>
+                              <span className={`font-bold font-mono ${isDarkMode ? 'text-dark-text' : 'text-primary-dark'}`}>{message.debug.time_to_first_token_ms?.toFixed(0)} ms</span>
                             </div>
-                    
-                            <div className="flex justify-between pt-1 border-t border-current/20">
-                              <span className={`font-semibold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>Total Request Duration:</span>
-                              <span className={`font-mono font-semibold ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>{message.debug.total_request_time_ms?.toFixed(0)} ms</span>
+                          </div>
+                        </div>
+                        );
+                      })()}
+
+                      {/* Event Detail Popup (triggered from any timeline row) */}
+                      {selectedEvent && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedEvent(null)}>
+                          <div
+                            className={`relative w-[600px] max-w-[90vw] max-h-[80vh] overflow-auto rounded-lg shadow-xl p-5 ${isDarkMode ? 'bg-dark-surface text-dark-text' : 'bg-white text-gray-800'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              onClick={() => setSelectedEvent(null)}
+                              className={`absolute top-2 right-3 text-lg hover:opacity-70 ${isDarkMode ? 'text-dark-muted' : 'text-gray-400'}`}
+                            >✕</button>
+                            <h3 className="font-semibold text-sm mb-4">{selectedEvent.icon ?? '📋'} {selectedEvent.label} – Request Details</h3>
+
+                            {/* Request Input */}
+                            <div className="mb-4">
+                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>Request Input</div>
+                              <pre className={`text-xs p-3 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all ${isDarkMode ? 'bg-dark-bg' : 'bg-gray-50 border border-gray-200'}`}>
+                                {selectedEvent.request_input ? <ColoredJson data={selectedEvent.request_input} isDarkMode={isDarkMode} /> : 'N/A'}
+                              </pre>
+                            </div>
+
+                            {/* Request Output */}
+                            <div>
+                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>Request Output</div>
+                              <pre className={`text-xs p-3 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all ${isDarkMode ? 'bg-dark-bg' : 'bg-gray-50 border border-gray-200'}`}>
+                                {selectedEvent.request_output ? <ColoredJson data={selectedEvent.request_output} isDarkMode={isDarkMode} /> : 'N/A'}
+                              </pre>
+                            </div>
+
+                            {/* Duration */}
+                            <div className={`mt-3 pt-3 border-t text-xs ${isDarkMode ? 'border-dark-card text-dark-muted' : 'border-gray-200 text-gray-500'}`}>
+                              Duration: <span className="font-mono font-semibold">{selectedEvent.duration_ms?.toFixed(0) ?? '–'} ms</span>
                             </div>
                           </div>
                         </div>

@@ -9,8 +9,11 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any
 import asyncio
 import json
+from datetime import datetime
 from agent.investment_agent import InvestmentAgent
+from agent_framework import AgentThread
 from models.user import DUMMY_USER
+from tools.pii import analyze_text_with_details as pii_analyze_detailed, unmask_response as pii_unmask, set_pii_replacements
 
 # Load environment variables
 load_dotenv()
@@ -27,12 +30,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session store for conversation history
-sessions: Dict[str, List[Dict[str, str]]] = {}
+# Shared agent instance (stateless, thread carries state)
+agent = InvestmentAgent()
+
+# In-memory session store: session_id -> AgentThread
+sessions: Dict[str, AgentThread] = {}
+
+# Per-session PII masking state (stores pii_masking_enabled flag)
+session_pii_enabled: Dict[str, bool] = {}
 
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    pii_masking_enabled: bool = False
 
 class ChatResponse(BaseModel):
     response: str
@@ -55,21 +65,92 @@ async def chat_stream(request: ChatRequest):
     """
     session_id = request.session_id
     user_message = request.message
+    pii_masking_enabled = request.pii_masking_enabled
     
-    # Initialize session history if not exists
+    # Store PII masking preference for the session
+    session_pii_enabled[session_id] = pii_masking_enabled
+    
+    # Get or create AgentThread for this session
     if session_id not in sessions:
-        sessions[session_id] = []
+        sessions[session_id] = agent.get_new_thread()
     
-    # Add user message to history
-    sessions[session_id].append({"role": "user", "content": user_message})
+    # Apply PII masking if enabled
+    pii_replacements: list = []
+    pii_debug_info: dict = {}
+    message_for_llm = user_message
+    if pii_masking_enabled:
+        pii_result = pii_analyze_detailed(user_message)
+        message_for_llm = pii_result["masked_text"]
+        pii_replacements = pii_result["replacements"]
+        pii_debug_info = {
+            "pii_enabled": True,
+            "pii_status": pii_result["status"],
+            "pii_detail": pii_result["detail"],
+            "pii_http_status": pii_result["http_status"],
+            "pii_entities_found": pii_result["entities_found"],
+            "pii_duration_ms": pii_result["duration_ms"],
+            "pii_masked_message": message_for_llm,
+            "pii_redactions": [
+                {"original": orig, "mask": mask} for orig, mask in pii_replacements
+            ],
+            "pii_request_input": pii_result["request_body"],
+            "pii_request_output": pii_result["response_body"],
+            "pii_timeline_event": {
+                "order": 0,
+                "event_type": "pii_masking",
+                "label": "PII Masking",
+                "start_ms": 0,
+                "duration_ms": pii_result["duration_ms"],
+                "timestamp": datetime.now().isoformat(),
+            },
+        }
+    
+    # Thread carries conversation history; no manual append needed
+    thread = sessions[session_id]
     
     async def event_generator():
         try:
-            # Initialize agent
-            agent = InvestmentAgent()
+            # Emit PII debug event first if masking is enabled
+            if pii_masking_enabled:
+                yield {
+                    "event": "pii_result",
+                    "data": json.dumps({
+                        "type": "pii_result",
+                        "data": pii_debug_info
+                    })
+                }
             
-            # Stream agent response
-            async for event in agent.stream_response(user_message, sessions[session_id]):
+            # Stream agent response (send masked message to LLM)
+            # Set PII replacements so tool functions can unmask their parameters
+            set_pii_replacements(pii_replacements)
+            async for event in agent.stream_response(message_for_llm, thread):
+                # Unmask PII in response content before sending to client
+                if pii_masking_enabled and pii_replacements:
+                    if event.get("type") == "message" and "data" in event:
+                        event["data"]["content"] = pii_unmask(event["data"]["content"], pii_replacements)
+                    elif event.get("type") == "message_chunk" and "data" in event:
+                        event["data"]["content"] = pii_unmask(event["data"]["content"], pii_replacements)
+                
+                # Attach PII debug info to the final message event
+                if pii_masking_enabled and event.get("type") == "message":
+                    if "debug" not in event:
+                        event["debug"] = {}
+                    event["debug"].update(pii_debug_info)
+                    # Inject PII as the first timeline event (order 0)
+                    if "pii_timeline_event" in pii_debug_info:
+                        timeline = event["debug"].get("timeline_events", [])
+                        # Shift all agent timeline start_ms by PII duration (agent timer starts after PII)
+                        pii_ms = pii_debug_info.get("pii_duration_ms", 0)
+                        for te in timeline:
+                            if "start_ms" in te:
+                                te["start_ms"] = round(te["start_ms"] + pii_ms, 2)
+                        timeline.insert(0, pii_debug_info["pii_timeline_event"])
+                        event["debug"]["timeline_events"] = timeline
+                    # Include PII duration in total request duration
+                    pii_ms = pii_debug_info.get("pii_duration_ms", 0)
+                    if "total_request_time_ms" in event["debug"]:
+                        event["debug"]["total_request_time_ms"] = round(event["debug"]["total_request_time_ms"] + pii_ms, 2)
+                
                 # Use the event type as SSE event name
                 event_type = event.get("type", "message")
                 yield {
@@ -104,22 +185,33 @@ async def chat(request: ChatRequest):
     """
     session_id = request.session_id
     user_message = request.message
+    pii_masking_enabled = request.pii_masking_enabled
     
-    # Initialize session history if not exists
+    # Get or create AgentThread for this session
     if session_id not in sessions:
-        sessions[session_id] = []
+        sessions[session_id] = agent.get_new_thread()
     
-    # Add user message to history
-    sessions[session_id].append({"role": "user", "content": user_message})
+    # Apply PII masking if enabled
+    pii_replacements: list = []
+    message_for_llm = user_message
+    if pii_masking_enabled:
+        pii_result = pii_analyze_detailed(user_message)
+        message_for_llm = pii_result["masked_text"]
+        pii_replacements = pii_result["replacements"]
+    
+    thread = sessions[session_id]
     
     try:
-        agent = InvestmentAgent()
-        response = await agent.get_response(user_message, sessions[session_id])
+        # Set PII replacements so tool functions can unmask their parameters
+        set_pii_replacements(pii_replacements)
+        response = await agent.get_response(message_for_llm, thread)
         
-        # Add assistant response to history
-        sessions[session_id].append({"role": "assistant", "content": response["data"]["content"]})
+        # Unmask PII in response before returning to client
+        response_content = response["data"]["content"]
+        if pii_masking_enabled and pii_replacements:
+            response_content = pii_unmask(response_content, pii_replacements)
         
-        return ChatResponse(response=response["data"]["content"], debug=response.get("debug", {}))
+        return ChatResponse(response=response_content, debug=response.get("debug", {}))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
