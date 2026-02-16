@@ -84,7 +84,7 @@ def _get_pii_key() -> str:
     """Read PII_KEY lazily so it picks up dotenv values."""
     return os.getenv("PII_KEY", "")
 
-PII_CONFIDENCE_THRESHOLD = 0.85
+PII_CONFIDENCE_THRESHOLD = 0.80
 
 PII_CATEGORIES = [
     "Person",
