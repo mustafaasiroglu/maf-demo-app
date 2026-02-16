@@ -82,12 +82,12 @@ Guidelines:
 Remember: You must respond in Turkish to all user queries."""
 
 
-def create_currency_agent():
+def create_currency_agent(deployment: str | None = None):
     """Create and return a ChatAgent configured for currency/FX queries."""
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     api_key = os.getenv("AZURE_OPENAI_KEY")
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1-chat")
+    deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1-chat")
 
     chat_client = AzureOpenAIChatClient(
         api_key=api_key,
@@ -106,6 +106,7 @@ def create_currency_agent():
             convert_currency,
             get_currency_history,
         ],
+        max_tokens=2048,
     )
 
     return agent

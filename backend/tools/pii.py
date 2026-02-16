@@ -74,9 +74,17 @@ def pii_unmask_args(func):
 
 logger = logging.getLogger(__name__)
 
-# PII service configuration
-PII_ENDPOINT = os.getenv("PII_ENDPOINT", "")
-PII_KEY = os.getenv("PII_KEY", "")
+
+def _get_pii_endpoint() -> str:
+    """Read PII_ENDPOINT lazily so it picks up dotenv values."""
+    return os.getenv("PII_ENDPOINT", "")
+
+
+def _get_pii_key() -> str:
+    """Read PII_KEY lazily so it picks up dotenv values."""
+    return os.getenv("PII_KEY", "")
+
+PII_CONFIDENCE_THRESHOLD = 0.85
 
 PII_CATEGORIES = [
     "Person",
@@ -124,7 +132,9 @@ def analyze_text(text: str) -> Tuple[str, List[Tuple[str, str]]]:
     If the PII service is unreachable or not configured the original text is
     returned unchanged with an empty replacement list.
     """
-    if not PII_ENDPOINT or not PII_KEY:
+    pii_endpoint = _get_pii_endpoint()
+    pii_key = _get_pii_key()
+    if not pii_endpoint or not pii_key:
         logger.warning("PII endpoint/key not configured – skipping PII masking")
         return text, []
 
@@ -132,7 +142,7 @@ def analyze_text(text: str) -> Tuple[str, List[Tuple[str, str]]]:
 
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": PII_KEY,
+        "Ocp-Apim-Subscription-Key": pii_key,
     }
 
     body = {
@@ -154,7 +164,7 @@ def analyze_text(text: str) -> Tuple[str, List[Tuple[str, str]]]:
 
     try:
         response = requests.post(
-            PII_ENDPOINT, headers=headers, data=json.dumps(body), timeout=10
+            pii_endpoint, headers=headers, data=json.dumps(body), timeout=10
         )
     except requests.RequestException as exc:
         logger.error("PII service request failed: %s", exc)
@@ -178,13 +188,22 @@ def analyze_text(text: str) -> Tuple[str, List[Tuple[str, str]]]:
 
     for entity in entities:
         before = redacted_text[start : entity["offset"]]
-        cat = entity["category"]
-        subcat = ":" + entity["subcategory"] if "subcategory" in entity else ""
-        allcat = cat + subcat
-        cat_counts[allcat] = cat_counts.get(allcat, 0) + 1
-        mask = f"[[{allcat} {cat_counts[allcat]}]]"
-        txt_parts.append(mask_numbers(before) + mask)
-        replacements.append((entity["text"], mask))
+        score = entity.get("confidenceScore", 1.0)
+        if score < PII_CONFIDENCE_THRESHOLD:
+            # Low confidence – restore the original text instead of masking
+            logger.info(
+                "PII entity '%s' (%s) skipped: confidence %.2f < %.2f",
+                entity["text"], entity["category"], score, PII_CONFIDENCE_THRESHOLD,
+            )
+            txt_parts.append(mask_numbers(before) + entity["text"])
+        else:
+            cat = entity["category"]
+            subcat = ":" + entity["subcategory"] if "subcategory" in entity else ""
+            allcat = cat + subcat
+            cat_counts[allcat] = cat_counts.get(allcat, 0) + 1
+            mask = f"[[{allcat} {cat_counts[allcat]}]]"
+            txt_parts.append(mask_numbers(before) + mask)
+            replacements.append((entity["text"], mask))
         start = entity["offset"] + entity["length"]
 
     masked_text = "".join(txt_parts) + mask_numbers(redacted_text[start:])
@@ -218,7 +237,9 @@ def analyze_text_with_details(text: str) -> dict:
         "response_body": None,
     }
 
-    if not PII_ENDPOINT or not PII_KEY:
+    pii_endpoint = _get_pii_endpoint()
+    pii_key = _get_pii_key()
+    if not pii_endpoint or not pii_key:
         result["status"] = "skipped"
         result["detail"] = "PII_ENDPOINT or PII_KEY environment variable is not set"
         result["duration_ms"] = round((time.time() - start_time) * 1000, 2)
@@ -229,7 +250,7 @@ def analyze_text_with_details(text: str) -> dict:
 
     headers = {
         "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": PII_KEY,
+        "Ocp-Apim-Subscription-Key": pii_key,
     }
 
     body = {
@@ -253,7 +274,7 @@ def analyze_text_with_details(text: str) -> dict:
 
     try:
         response = requests.post(
-            PII_ENDPOINT, headers=headers, data=json.dumps(body), timeout=10
+            pii_endpoint, headers=headers, data=json.dumps(body), timeout=10
         )
     except requests.RequestException as exc:
         result["status"] = "error"
@@ -286,13 +307,22 @@ def analyze_text_with_details(text: str) -> dict:
 
     for entity in entities:
         before = redacted_text[start : entity["offset"]]
-        cat = entity["category"]
-        subcat = ":" + entity["subcategory"] if "subcategory" in entity else ""
-        allcat = cat + subcat
-        cat_counts[allcat] = cat_counts.get(allcat, 0) + 1
-        mask = f"[[{allcat} {cat_counts[allcat]}]]"
-        txt_parts.append(mask_numbers(before) + mask)
-        replacements.append((entity["text"], mask))
+        score = entity.get("confidenceScore", 1.0)
+        if score < PII_CONFIDENCE_THRESHOLD:
+            # Low confidence – restore the original text instead of masking
+            logger.info(
+                "PII entity '%s' (%s) skipped: confidence %.2f < %.2f",
+                entity["text"], entity["category"], score, PII_CONFIDENCE_THRESHOLD,
+            )
+            txt_parts.append(mask_numbers(before) + entity["text"])
+        else:
+            cat = entity["category"]
+            subcat = ":" + entity["subcategory"] if "subcategory" in entity else ""
+            allcat = cat + subcat
+            cat_counts[allcat] = cat_counts.get(allcat, 0) + 1
+            mask = f"[[{allcat} {cat_counts[allcat]}]]"
+            txt_parts.append(mask_numbers(before) + mask)
+            replacements.append((entity["text"], mask))
         start = entity["offset"] + entity["length"]
 
     result["masked_text"] = "".join(txt_parts) + mask_numbers(redacted_text[start:])

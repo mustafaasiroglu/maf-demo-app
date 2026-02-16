@@ -1,22 +1,28 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables BEFORE any application imports
+# (modules like tools.pii read env vars at import time)
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-import os
-from dotenv import load_dotenv
 from typing import List, Dict, Any
 import asyncio
 import json
 from datetime import datetime
 from agent.investment_agent import InvestmentAgent
-from agent_framework import AgentThread
+from agent_framework import Workflow
 from models.user import DUMMY_USER
 from tools.pii import analyze_text_with_details as pii_analyze_detailed, unmask_response as pii_unmask, set_pii_replacements
+from tools.span_collector import setup_otel
 
-# Load environment variables
-load_dotenv()
+# Initialize OTel tracing BEFORE creating agents (must be first)
+setup_otel()
 
 app = FastAPI(title="Investment Bot API", version="1.0.0")
 
@@ -33,8 +39,8 @@ app.add_middleware(
 # Shared agent instance (stateless, thread carries state)
 agent = InvestmentAgent()
 
-# In-memory session store: session_id -> AgentThread
-sessions: Dict[str, AgentThread] = {}
+# In-memory session store: session_id -> {"workflow": Workflow, "pending_request_id": str | None}
+sessions: Dict[str, dict] = {}
 
 # Per-session PII masking state (stores pii_masking_enabled flag)
 session_pii_enabled: Dict[str, bool] = {}
@@ -43,6 +49,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
     pii_masking_enabled: bool = False
+    model: str = ""
 
 class ChatResponse(BaseModel):
     response: str
@@ -66,13 +73,34 @@ async def chat_stream(request: ChatRequest):
     session_id = request.session_id
     user_message = request.message
     pii_masking_enabled = request.pii_masking_enabled
+    requested_model = request.model or None  # None means use default
     
     # Store PII masking preference for the session
     session_pii_enabled[session_id] = pii_masking_enabled
     
-    # Get or create AgentThread for this session
+    # Get or create Workflow for this session
+    # Recreate if the model changed since last request
+    is_followup = False
+    pending_request_id = None
     if session_id not in sessions:
-        sessions[session_id] = agent.get_new_thread()
+        sessions[session_id] = {
+            "workflow": agent.create_new_workflow(model=requested_model),
+            "pending_request_id": None,
+            "model": requested_model,
+        }
+    else:
+        prev_model = sessions[session_id].get("model")
+        if requested_model and requested_model != prev_model:
+            # Model changed — create a fresh workflow with the new model
+            sessions[session_id] = {
+                "workflow": agent.create_new_workflow(model=requested_model),
+                "pending_request_id": None,
+                "model": requested_model,
+            }
+        else:
+            pending_request_id = sessions[session_id].get("pending_request_id")
+            if pending_request_id:
+                is_followup = True
     
     # Apply PII masking if enabled
     pii_replacements: list = []
@@ -100,13 +128,16 @@ async def chat_stream(request: ChatRequest):
                 "event_type": "pii_masking",
                 "label": "PII Masking",
                 "start_ms": 0,
+                "timestamp_start": 0,
+                "timestamp_end": pii_result["duration_ms"],
                 "duration_ms": pii_result["duration_ms"],
                 "timestamp": datetime.now().isoformat(),
+                "request_input": pii_result["request_body"],
+                "request_output": pii_result["response_body"],
             },
         }
     
-    # Thread carries conversation history; no manual append needed
-    thread = sessions[session_id]
+    workflow = sessions[session_id]["workflow"]
     
     async def event_generator():
         try:
@@ -123,7 +154,7 @@ async def chat_stream(request: ChatRequest):
             # Stream agent response (send masked message to LLM)
             # Set PII replacements so tool functions can unmask their parameters
             set_pii_replacements(pii_replacements)
-            async for event in agent.stream_response(message_for_llm, thread):
+            async for event in agent.stream_response(message_for_llm, workflow, is_followup, pending_request_id, model=requested_model):
                 # Unmask PII in response content before sending to client
                 if pii_masking_enabled and pii_replacements:
                     if event.get("type") == "message" and "data" in event:
@@ -139,17 +170,24 @@ async def chat_stream(request: ChatRequest):
                     # Inject PII as the first timeline event (order 0)
                     if "pii_timeline_event" in pii_debug_info:
                         timeline = event["debug"].get("timeline_events", [])
-                        # Shift all agent timeline start_ms by PII duration (agent timer starts after PII)
+                        # Shift all agent timeline timestamps by PII duration (agent timer starts after PII)
                         pii_ms = pii_debug_info.get("pii_duration_ms", 0)
                         for te in timeline:
-                            if "start_ms" in te:
-                                te["start_ms"] = round(te["start_ms"] + pii_ms, 2)
+                            if "timestamp_start" in te:
+                                te["timestamp_start"] = round(te["timestamp_start"] + pii_ms, 2)
+                            if "timestamp_end" in te:
+                                te["timestamp_end"] = round(te["timestamp_end"] + pii_ms, 2)
                         timeline.insert(0, pii_debug_info["pii_timeline_event"])
                         event["debug"]["timeline_events"] = timeline
                     # Include PII duration in total request duration
                     pii_ms = pii_debug_info.get("pii_duration_ms", 0)
                     if "total_request_time_ms" in event["debug"]:
                         event["debug"]["total_request_time_ms"] = round(event["debug"]["total_request_time_ms"] + pii_ms, 2)
+                
+                # Track pending_request_id from the final message event
+                if event.get("type") == "message" and "debug" in event:
+                    new_pending = event["debug"].get("pending_request_id")
+                    sessions[session_id]["pending_request_id"] = new_pending
                 
                 # Use the event type as SSE event name
                 event_type = event.get("type", "message")
@@ -187,9 +225,15 @@ async def chat(request: ChatRequest):
     user_message = request.message
     pii_masking_enabled = request.pii_masking_enabled
     
-    # Get or create AgentThread for this session
+    # Get or create Workflow for this session
+    is_followup = False
+    pending_request_id = None
     if session_id not in sessions:
-        sessions[session_id] = agent.get_new_thread()
+        sessions[session_id] = {"workflow": agent.create_new_workflow(), "pending_request_id": None}
+    else:
+        pending_request_id = sessions[session_id].get("pending_request_id")
+        if pending_request_id:
+            is_followup = True
     
     # Apply PII masking if enabled
     pii_replacements: list = []
@@ -199,12 +243,16 @@ async def chat(request: ChatRequest):
         message_for_llm = pii_result["masked_text"]
         pii_replacements = pii_result["replacements"]
     
-    thread = sessions[session_id]
+    workflow = sessions[session_id]["workflow"]
     
     try:
         # Set PII replacements so tool functions can unmask their parameters
         set_pii_replacements(pii_replacements)
-        response = await agent.get_response(message_for_llm, thread)
+        response = await agent.get_response(message_for_llm, workflow, is_followup, pending_request_id)
+        
+        # Store pending_request_id for follow-up messages
+        if "debug" in response:
+            sessions[session_id]["pending_request_id"] = response["debug"].get("pending_request_id")
         
         # Unmask PII in response before returning to client
         response_content = response["data"]["content"]

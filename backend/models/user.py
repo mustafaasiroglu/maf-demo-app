@@ -6,8 +6,8 @@ class DummyUser:
     
     def __init__(self):
         self.customer_id = "123456789"
-        self.name = "Ada Ulukaya"
-        self.email = "ada.ulukaya@example.com"
+        self.name = "Mustafa Aşıroğlu"
+        self.email = "mustafa.asiroglu@example.com"
         self.phone = "+90 555 123 4567"
         self.registration_date = "2023-01-15"
         self.portfolio = [

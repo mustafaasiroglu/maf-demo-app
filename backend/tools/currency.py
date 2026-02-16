@@ -1,178 +1,180 @@
+"""
+TCMB (Turkish Central Bank) live exchange rate provider.
+
+Fetches current and historical rates from:
+  https://www.tcmb.gov.tr/kurlar/today.xml
+  https://www.tcmb.gov.tr/kurlar/YYYYMM/DDMMYYYY.xml
+"""
+
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
-import json
+import xml.etree.ElementTree as ET
+import threading
+import time
+import logging
+import requests
 
-# Dummy exchange rate database (base currency: TRY)
-CURRENCY_DATABASE = {
-    "USD": {
-        "code": "USD",
-        "name": "Amerikan Doları",
-        "name_en": "US Dollar",
-        "symbol": "$",
-        "buy_rate": 36.45,
-        "sell_rate": 36.62,
-        "change_1d": 0.18,
-        "change_1w": 0.85,
-        "change_1m": 1.42,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [36.10, 36.18, 36.25, 36.30, 36.28, 36.40, 36.45],
-    },
-    "EUR": {
-        "code": "EUR",
-        "name": "Euro",
-        "name_en": "Euro",
-        "symbol": "€",
-        "buy_rate": 38.12,
-        "sell_rate": 38.35,
-        "change_1d": -0.10,
-        "change_1w": 0.55,
-        "change_1m": 1.20,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [37.80, 37.85, 37.95, 38.05, 38.10, 38.18, 38.12],
-    },
-    "GBP": {
-        "code": "GBP",
-        "name": "İngiliz Sterlini",
-        "name_en": "British Pound",
-        "symbol": "£",
-        "buy_rate": 45.80,
-        "sell_rate": 46.10,
-        "change_1d": 0.25,
-        "change_1w": 1.10,
-        "change_1m": 2.05,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [45.20, 45.35, 45.42, 45.55, 45.60, 45.72, 45.80],
-    },
-    "CHF": {
-        "code": "CHF",
-        "name": "İsviçre Frangı",
-        "name_en": "Swiss Franc",
-        "symbol": "CHF",
-        "buy_rate": 40.25,
-        "sell_rate": 40.50,
-        "change_1d": 0.08,
-        "change_1w": 0.42,
-        "change_1m": 0.95,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [39.95, 40.00, 40.05, 40.10, 40.15, 40.20, 40.25],
-    },
-    "JPY": {
-        "code": "JPY",
-        "name": "Japon Yeni",
-        "name_en": "Japanese Yen",
-        "symbol": "¥",
-        "buy_rate": 0.2380,
-        "sell_rate": 0.2410,
-        "change_1d": -0.0005,
-        "change_1w": 0.0020,
-        "change_1m": 0.0045,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [0.2365, 0.2368, 0.2370, 0.2375, 0.2378, 0.2382, 0.2380],
-    },
-    "SAR": {
-        "code": "SAR",
-        "name": "Suudi Arabistan Riyali",
-        "name_en": "Saudi Riyal",
-        "symbol": "﷼",
-        "buy_rate": 9.72,
-        "sell_rate": 9.78,
-        "change_1d": 0.04,
-        "change_1w": 0.22,
-        "change_1m": 0.38,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [9.58, 9.60, 9.63, 9.65, 9.68, 9.70, 9.72],
-    },
-    "AUD": {
-        "code": "AUD",
-        "name": "Avustralya Doları",
-        "name_en": "Australian Dollar",
-        "symbol": "A$",
-        "buy_rate": 23.15,
-        "sell_rate": 23.40,
-        "change_1d": 0.12,
-        "change_1w": 0.65,
-        "change_1m": 1.10,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [22.75, 22.82, 22.90, 22.95, 23.00, 23.10, 23.15],
-    },
-    "CAD": {
-        "code": "CAD",
-        "name": "Kanada Doları",
-        "name_en": "Canadian Dollar",
-        "symbol": "C$",
-        "buy_rate": 25.30,
-        "sell_rate": 25.55,
-        "change_1d": 0.10,
-        "change_1w": 0.48,
-        "change_1m": 0.92,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [25.00, 25.05, 25.10, 25.15, 25.18, 25.25, 25.30],
-    },
-    "XAU": {
-        "code": "XAU",
-        "name": "Gram Altın",
-        "name_en": "Gold (gram)",
-        "symbol": "XAU",
-        "buy_rate": 3125.00,
-        "sell_rate": 3140.00,
-        "change_1d": 15.00,
-        "change_1w": 45.00,
-        "change_1m": 120.00,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [3080.00, 3085.00, 3095.00, 3100.00, 3110.00, 3118.00, 3125.00],
-    },
-    "XAG": {
-        "code": "XAG",
-        "name": "Gram Gümüş",
-        "name_en": "Silver (gram)",
-        "symbol": "XAG",
-        "buy_rate": 36.50,
-        "sell_rate": 37.00,
-        "change_1d": 0.30,
-        "change_1w": 1.20,
-        "change_1m": 2.80,
-        "last_updated": "2026-02-10T10:30:00",
-        "history_7d": [35.50, 35.65, 35.80, 35.95, 36.10, 36.35, 36.50],
-    },
-}
+logger = logging.getLogger(__name__)
+
+TCMB_TODAY_URL = "https://www.tcmb.gov.tr/kurlar/today.xml"
+TCMB_HISTORY_URL = "https://www.tcmb.gov.tr/kurlar/{ym}/{dmy}.xml"
+
+# In-memory cache: { url: (parsed_dict, fetch_timestamp) }
+_cache: Dict[str, tuple] = {}
+_cache_lock = threading.Lock()
+_CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
-def get_exchange_rate(currency_code: str) -> Dict[str, Any]:
-    """
-    Get the current exchange rate for a specific currency against TRY.
+# ── XML Parsing ──────────────────────────────────────────────────────────────
 
-    Args:
-        currency_code: Currency code (e.g., "USD", "EUR", "GBP")
+def _parse_float(text: Optional[str]) -> Optional[float]:
+    """Safely parse a float from XML text, returning None for empty/missing."""
+    if not text or not text.strip():
+        return None
+    try:
+        return float(text.strip())
+    except ValueError:
+        return None
+
+
+def _parse_tcmb_xml(xml_text: str) -> Dict[str, Any]:
+    """Parse TCMB XML into a dict keyed by currency code.
 
     Returns:
-        Dictionary with exchange rate information
+        {
+            "_meta": {"date": "13.02.2026", "bulletin": "2026/31"},
+            "USD": { "code": "USD", "name": "ABD DOLARI", ... },
+            ...
+        }
     """
+    root = ET.fromstring(xml_text)
+    result: Dict[str, Any] = {}
+
+    # Meta
+    result["_meta"] = {
+        "date": root.attrib.get("Tarih", ""),
+        "date_iso": root.attrib.get("Date", ""),
+        "bulletin": root.attrib.get("Bulten_No", ""),
+    }
+
+    for currency_el in root.findall("Currency"):
+        code = currency_el.attrib.get("CurrencyCode", "").strip()
+        if not code:
+            continue
+
+        unit = _parse_float(currency_el.findtext("Unit")) or 1
+        forex_buy = _parse_float(currency_el.findtext("ForexBuying"))
+        forex_sell = _parse_float(currency_el.findtext("ForexSelling"))
+        banknote_buy = _parse_float(currency_el.findtext("BanknoteBuying"))
+        banknote_sell = _parse_float(currency_el.findtext("BanknoteSelling"))
+
+        # Normalize to 1 unit
+        entry: Dict[str, Any] = {
+            "code": code,
+            "name": currency_el.findtext("Isim", "").strip(),
+            "name_en": currency_el.findtext("CurrencyName", "").strip(),
+            "unit": int(unit),
+            "forex_buy": round(forex_buy / unit, 6) if forex_buy else None,
+            "forex_sell": round(forex_sell / unit, 6) if forex_sell else None,
+            "banknote_buy": round(banknote_buy / unit, 6) if banknote_buy else None,
+            "banknote_sell": round(banknote_sell / unit, 6) if banknote_sell else None,
+        }
+        result[code] = entry
+
+    return result
+
+
+# ── HTTP Fetch with cache ────────────────────────────────────────────────────
+
+def _fetch_tcmb(url: str, use_cache: bool = True) -> Dict[str, Any]:
+    """Fetch and parse TCMB XML, with optional caching."""
+    now = time.time()
+
+    if use_cache:
+        with _cache_lock:
+            cached = _cache.get(url)
+            if cached and (now - cached[1]) < _CACHE_TTL_SECONDS:
+                return cached[0]
+
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "GarantiBankBot/1.0"})
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        parsed = _parse_tcmb_xml(resp.text)
+
+        with _cache_lock:
+            _cache[url] = (parsed, now)
+
+        return parsed
+    except Exception as e:
+        logger.error(f"TCMB fetch failed ({url}): {e}")
+        # Return stale cache if available
+        with _cache_lock:
+            cached = _cache.get(url)
+            if cached:
+                logger.warning("Returning stale cache for TCMB data")
+                return cached[0]
+        raise
+
+
+def _get_today_rates() -> Dict[str, Any]:
+    """Fetch today's rates from TCMB."""
+    return _fetch_tcmb(TCMB_TODAY_URL)
+
+
+def _get_historical_rates(dt: datetime) -> Optional[Dict[str, Any]]:
+    """Fetch rates for a specific date. Returns None if unavailable (weekend/holiday)."""
+    ym = dt.strftime("%Y%m")
+    dmy = dt.strftime("%d%m%Y")
+    url = TCMB_HISTORY_URL.format(ym=ym, dmy=dmy)
+    try:
+        return _fetch_tcmb(url, use_cache=True)
+    except Exception:
+        return None
+
+
+# ── Public API (same signatures as before) ───────────────────────────────────
+
+def get_exchange_rate(currency_code: str) -> Dict[str, Any]:
+    """Get the current exchange rate for a specific currency against TRY from TCMB."""
     code = currency_code.upper().strip()
 
-    if code in CURRENCY_DATABASE:
-        currency = CURRENCY_DATABASE[code]
-        return {
-            "status": "success",
-            "data": {
-                "code": currency["code"],
-                "name": currency["name"],
-                "symbol": currency["symbol"],
-                "buy_rate": currency["buy_rate"],
-                "sell_rate": currency["sell_rate"],
-                "spread": round(currency["sell_rate"] - currency["buy_rate"], 4),
-                "change_1d": currency["change_1d"],
-                "change_1d_pct": round((currency["change_1d"] / (currency["buy_rate"] - currency["change_1d"])) * 100, 2),
-                "change_1w": currency["change_1w"],
-                "change_1m": currency["change_1m"],
-                "last_updated": currency["last_updated"],
-                "base_currency": "TRY",
-            },
+    try:
+        rates = _get_today_rates()
+    except Exception as e:
+        return {"status": "error", "message": f"TCMB verilerine erişilemedi: {str(e)}"}
+
+    meta = rates.get("_meta", {})
+
+    if code in rates and code != "_meta":
+        c = rates[code]
+        buy = c["forex_buy"] or c["banknote_buy"]
+        sell = c["forex_sell"] or c["banknote_sell"]
+
+        data: Dict[str, Any] = {
+            "code": c["code"],
+            "name": c["name"],
+            "name_en": c["name_en"],
+            "buy_rate": buy,
+            "sell_rate": sell,
+            "spread": round(sell - buy, 6) if (buy and sell) else None,
+            "banknote_buy": c["banknote_buy"],
+            "banknote_sell": c["banknote_sell"],
+            "base_currency": "TRY",
+            "source": "TCMB",
+            "date": meta.get("date", ""),
+            "bulletin": meta.get("bulletin", ""),
         }
+        return {"status": "success", "data": data}
 
     # Try partial match
     matches = []
-    for key, val in CURRENCY_DATABASE.items():
-        if code in val["name"].upper() or code in val["name_en"].upper() or code in key:
+    for key, val in rates.items():
+        if key == "_meta":
+            continue
+        if (code in val.get("name", "").upper()
+                or code in val.get("name_en", "").upper()
+                or code in key):
             matches.append(key)
 
     if matches:
@@ -182,54 +184,53 @@ def get_exchange_rate(currency_code: str) -> Dict[str, Any]:
             "suggestions": matches,
         }
 
+    available = [k for k in rates if k != "_meta"]
     return {
         "status": "not_found",
-        "message": f"'{currency_code}' kodlu döviz bulunamadı.",
-        "available_currencies": list(CURRENCY_DATABASE.keys()),
+        "message": f"'{currency_code}' kodlu döviz TCMB verilerinde bulunamadı.",
+        "available_currencies": available,
     }
 
 
 def list_exchange_rates(sort_by: str = "code") -> Dict[str, Any]:
-    """
-    List all available exchange rates.
+    """List all available TCMB exchange rates."""
+    try:
+        rates = _get_today_rates()
+    except Exception as e:
+        return {"status": "error", "message": f"TCMB verilerine erişilemedi: {str(e)}"}
 
-    Args:
-        sort_by: Sort criteria - "code", "buy_rate", "change_1d", "change_1w"
-
-    Returns:
-        Dictionary with all exchange rates
-    """
-    rates = []
-    for code, currency in CURRENCY_DATABASE.items():
-        rates.append({
-            "code": currency["code"],
-            "name": currency["name"],
-            "symbol": currency["symbol"],
-            "buy_rate": currency["buy_rate"],
-            "sell_rate": currency["sell_rate"],
-            "change_1d": currency["change_1d"],
-            "change_1w": currency["change_1w"],
-            "change_1m": currency["change_1m"],
+    meta = rates.get("_meta", {})
+    items = []
+    for key, val in rates.items():
+        if key == "_meta":
+            continue
+        buy = val["forex_buy"] or val["banknote_buy"]
+        sell = val["forex_sell"] or val["banknote_sell"]
+        if not buy and not sell:
+            continue
+        items.append({
+            "code": val["code"],
+            "name": val["name"],
+            "buy_rate": buy,
+            "sell_rate": sell,
         })
 
-    # Sort
     sort_key_map = {
         "code": lambda x: x["code"],
-        "buy_rate": lambda x: x["buy_rate"],
-        "change_1d": lambda x: x["change_1d"],
-        "change_1w": lambda x: x["change_1w"],
-        "change_1m": lambda x: x["change_1m"],
+        "buy_rate": lambda x: x.get("buy_rate") or 0,
+        "name": lambda x: x["name"],
     }
     sort_fn = sort_key_map.get(sort_by, sort_key_map["code"])
-    reverse = sort_by != "code"
-    rates.sort(key=sort_fn, reverse=reverse)
+    reverse = sort_by == "buy_rate"
+    items.sort(key=sort_fn, reverse=reverse)
 
     return {
         "status": "success",
-        "data": rates,
-        "count": len(rates),
+        "data": items,
+        "count": len(items),
         "base_currency": "TRY",
-        "last_updated": "2026-02-10T10:30:00",
+        "source": "TCMB",
+        "date": meta.get("date", ""),
     }
 
 
@@ -238,92 +239,97 @@ def convert_currency(
     from_currency: str,
     to_currency: str,
 ) -> Dict[str, Any]:
-    """
-    Convert an amount between two currencies.
-
-    Args:
-        amount: Amount to convert
-        from_currency: Source currency code (e.g., "USD", "TRY")
-        to_currency: Target currency code (e.g., "TRY", "EUR")
-
-    Returns:
-        Dictionary with conversion result
-    """
+    """Convert an amount between two currencies using TCMB rates."""
     from_code = from_currency.upper().strip()
     to_code = to_currency.upper().strip()
 
-    # Get rates (everything is relative to TRY)
+    try:
+        rates = _get_today_rates()
+    except Exception as e:
+        return {"status": "error", "message": f"TCMB verilerine erişilemedi: {str(e)}"}
+
+    # Get sell rate for source (customer sells foreign -> bank buys)
     if from_code == "TRY":
         from_rate = 1.0
-    elif from_code in CURRENCY_DATABASE:
-        from_rate = CURRENCY_DATABASE[from_code]["sell_rate"]  # When customer sells foreign, bank buys
+    elif from_code in rates and from_code != "_meta":
+        from_rate = rates[from_code]["forex_sell"] or rates[from_code]["banknote_sell"]
+        if not from_rate:
+            return {"status": "error", "message": f"'{from_currency}' için satış kuru bulunamadı."}
     else:
         return {"status": "error", "message": f"'{from_currency}' kodlu döviz bulunamadı."}
 
+    # Get buy rate for target (customer buys foreign -> bank sells)
     if to_code == "TRY":
         to_rate = 1.0
-    elif to_code in CURRENCY_DATABASE:
-        to_rate = CURRENCY_DATABASE[to_code]["buy_rate"]  # When customer buys foreign, bank sells
+    elif to_code in rates and to_code != "_meta":
+        to_rate = rates[to_code]["forex_buy"] or rates[to_code]["banknote_buy"]
+        if not to_rate:
+            return {"status": "error", "message": f"'{to_currency}' için alış kuru bulunamadı."}
     else:
         return {"status": "error", "message": f"'{to_currency}' kodlu döviz bulunamadı."}
 
-    # Convert: from -> TRY -> to
+    # from -> TRY -> to
     try_amount = amount * from_rate
     result_amount = try_amount / to_rate
 
     return {
         "status": "success",
         "data": {
-            "from": {
-                "currency": from_code,
-                "amount": amount,
-            },
-            "to": {
-                "currency": to_code,
-                "amount": round(result_amount, 4),
-            },
+            "from": {"currency": from_code, "amount": amount},
+            "to": {"currency": to_code, "amount": round(result_amount, 4)},
             "rate": round(from_rate / to_rate, 6),
             "try_equivalent": round(try_amount, 2),
-            "note": "Kurlar gösterge niteliğindedir. Gerçek işlem kurları farklılık gösterebilir.",
+            "source": "TCMB",
+            "note": "Kurlar TCMB gösterge niteliğindedir. Gerçek işlem kurları farklılık gösterebilir.",
         },
     }
 
 
 def get_currency_history(currency_code: str) -> Dict[str, Any]:
-    """
-    Get 7-day price history for a currency.
+    """Get 7-day price history for a currency from TCMB.
 
-    Args:
-        currency_code: Currency code (e.g., "USD", "EUR")
-
-    Returns:
-        Dictionary with price history
+    Fetches each of the last 7 business days individually.
+    Weekends/holidays are skipped automatically.
     """
     code = currency_code.upper().strip()
 
-    if code not in CURRENCY_DATABASE:
-        return {"status": "error", "message": f"'{currency_code}' kodlu döviz bulunamadı."}
+    today = datetime.now()
+    history: List[Dict[str, Any]] = []
+    attempts = 0
+    day = today
 
-    currency = CURRENCY_DATABASE[code]
-    history = currency["history_7d"]
+    # Walk backwards up to 14 calendar days to find 7 data points
+    while len(history) < 7 and attempts < 14:
+        rates = _get_historical_rates(day)
+        if rates and code in rates and code != "_meta":
+            c = rates[code]
+            buy = c["forex_buy"] or c["banknote_buy"]
+            if buy:
+                history.append({
+                    "date": day.strftime("%Y-%m-%d"),
+                    "rate": buy,
+                })
+        day -= timedelta(days=1)
+        attempts += 1
 
-    # Generate date labels for last 7 days
-    today = datetime(2026, 2, 10)
-    dates = [(today - timedelta(days=6 - i)).strftime("%Y-%m-%d") for i in range(7)]
+    if not history:
+        return {"status": "error", "message": f"'{currency_code}' için geçmiş veri bulunamadı."}
+
+    # Reverse so oldest first
+    history.reverse()
+    rates_only = [h["rate"] for h in history]
 
     return {
         "status": "success",
         "data": {
             "code": code,
-            "name": currency["name"],
             "base_currency": "TRY",
-            "history": [
-                {"date": date, "rate": rate}
-                for date, rate in zip(dates, history)
-            ],
-            "min_rate": min(history),
-            "max_rate": max(history),
-            "avg_rate": round(sum(history) / len(history), 4),
-            "current_rate": currency["buy_rate"],
+            "source": "TCMB",
+            "history": history,
+            "days_found": len(history),
+            "min_rate": min(rates_only),
+            "max_rate": max(rates_only),
+            "avg_rate": round(sum(rates_only) / len(rates_only), 4),
+            "current_rate": rates_only[-1],
         },
     }
