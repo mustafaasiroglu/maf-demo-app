@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import PriceChart from './PriceChart';
 
 function ColoredJson({ data, isDarkMode }: { data: any; isDarkMode: boolean }) {
   const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -63,6 +64,50 @@ interface User {
   phone: string;
   registration_date: string;
   portfolio: any[];
+}
+
+// Parse <graph code="..." start="..." end="..."></graph> tags in message content
+// code can be a single fund code or comma-separated for comparison (max 3)
+function renderContentWithGraphs(content: string, isDarkMode: boolean) {
+  const graphRegex = /<graph\s+code=["']([^"']+)["']\s+start=["']([^"']+)["']\s+end=["']([^"']+)["']\s*(?:\/>|><\/graph>)/g;
+  const parts: Array<{ type: 'text'; value: string } | { type: 'graph'; codes: string[]; start: string; end: string }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = graphRegex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
+    }
+    const codes = match[1].split(',').map(c => c.trim()).filter(Boolean).slice(0, 3);
+    parts.push({ type: 'graph', codes, start: match[2], end: match[3] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', value: content.slice(lastIndex) });
+  }
+
+  // If no graph tags found, return plain markdown
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return <ReactMarkdown>{content}</ReactMarkdown>;
+  }
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.type === 'text' ? (
+          <ReactMarkdown key={i}>{part.value}</ReactMarkdown>
+        ) : (
+          <PriceChart
+            key={`chart-${i}-${part.codes.join('-')}`}
+            fundCodes={part.codes}
+            startDate={part.start}
+            endDate={part.end}
+            isDarkMode={isDarkMode}
+          />
+        )
+      )}
+    </>
+  );
 }
 
 // Generate unique session ID for each page load
@@ -277,9 +322,9 @@ export default function Home() {
   };
 
   const exampleQuestions = [
-    'GTA Fonu nedir?',
-    'Getirisi en yüksek fonları sırala',
-    'GOL, GTA, GTL fonlarının son 1 haftaki sonuçlarını kıyaslar mısın?',
+    'GTA fonu nedir? Dağılımı nasıl?',
+    'Getirisi en yüksek fonlar hangileri?',
+    'GOL, GTZ fonlarının son 1 ay getirisi kıyaslar mısın?',
     'Ben kimim?',
   ];
 
@@ -312,6 +357,7 @@ export default function Home() {
           message: question,
           session_id: sessionId,
           pii_masking_enabled: piiMaskingEnabled,
+          model: selectedModel,
         }),
       });
 
@@ -426,9 +472,9 @@ export default function Home() {
   };
 
   return (
-    <div className={`flex flex-col h-screen ${isDarkMode ? 'dark bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg' : 'bg-gradient-to-br from-white via-primary/5 to-white'}`}>
+    <div id="print-root" className={`flex flex-col h-screen ${isDarkMode ? 'dark bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg' : 'bg-gradient-to-br from-white via-primary/5 to-white'}`}>
       {/* Header */}
-      <header className="bg-primary text-white p-4 shadow-md flex-shrink-0">
+      <header id="print-header" className="bg-primary text-white p-4 shadow-md flex-shrink-0">
         <div className="container mx-auto flex justify-between items-center">
           <div 
             className="cursor-pointer hover:opacity-80 transition-opacity"
@@ -456,6 +502,7 @@ export default function Home() {
       {/* Settings Panel Overlay */}
       {isSettingsOpen && (
         <div 
+          id="print-settings-overlay"
           className="fixed inset-0 bg-black/50 z-40 transition-opacity duration-300"
           onClick={() => setIsSettingsOpen(false)}
         />
@@ -463,6 +510,7 @@ export default function Home() {
 
       {/* Settings Panel */}
       <div 
+        id="print-settings-panel"
         className={`fixed top-0 right-0 h-full w-80 z-50 transform transition-transform duration-300 ease-in-out ${isSettingsOpen ? 'translate-x-0' : 'translate-x-full'} ${isDarkMode ? 'bg-dark-surface' : 'bg-white'} shadow-2xl`}
       >
         <div className="p-6 h-full flex flex-col">
@@ -584,7 +632,7 @@ export default function Home() {
       </div>
 
       {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div id="print-messages" className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="container mx-auto max-w-4xl">
           {messages.length === 0 && (
             <div className="text-center py-12">
@@ -623,7 +671,7 @@ export default function Home() {
                 {/* Show streaming content if available */}
                 {streamingContent ? (
                   <div className={`prose prose-sm max-w-none break-words ${isDarkMode ? 'prose-invert' : ''}`}>
-                    <ReactMarkdown>{streamingContent}</ReactMarkdown>
+                    {renderContentWithGraphs(streamingContent, isDarkMode)}
                     <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-1"></span>
                   </div>
                 ) : (
@@ -666,7 +714,7 @@ export default function Home() {
       </div>
 
       {/* Input Container */}
-      <div className={`sticky bottom-0 border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>
+      <div id="print-input" className={`sticky bottom-0 border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>
         <div className="container mx-auto max-w-4xl">
           <form onSubmit={handleSubmit} className="flex space-x-3">
             <input
@@ -717,7 +765,7 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
   const isUser = message.role === 'user';
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} items-start space-x-3`}>
+    <div data-role={message.role} className={`flex ${isUser ? 'justify-end' : 'justify-start'} items-start space-x-3`}>
       {!isUser && (
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white flex-shrink-0 ${isDarkMode ? 'bg-dark-card' : 'bg-primary'}`}>
           🍀
@@ -732,25 +780,62 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
           }`}
         >
           <div className={`prose prose-sm max-w-none break-words ${isDarkMode ? 'prose-invert' : ''}`}>
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            {renderContentWithGraphs(message.content, isDarkMode)}
           </div>
 
-          {/* Debug Info Button */}
-          {(message.debug || message.toolCalls) && (
-            <div className="mt-3 pt-3 border-t border-current/20">
-              <button
-                onClick={() => setShowDebug(!showDebug)}
-                className="flex items-center space-x-1 text-xs opacity-70 hover:opacity-100 transition-opacity"
-              >
-                <span>ℹ️</span>
-                <span>{showDebug ? 'Detayları Gizle' : 'Detayları Göster'}</span>
-              </button>
-
-              {showDebug && (
-                <div className={`mt-3 p-3 rounded text-xs ${isDarkMode ? 'bg-dark-bg/50' : 'bg-gray-50'}`}>
+          {/* Action Buttons & Debug Info */}
+          {!isUser && (
+            <div className={`mt-3 pt-3 border-t border-current/20 flex items-center justify-between ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(message.content); }}
+                  className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110"
+                  title="Kopyala"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                </button>
+                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Beğen">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
+                    <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                  </svg>
+                </button>
+                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Beğenme">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/>
+                    <path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>
+                  </svg>
+                </button>
+                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Sesli oku">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  </svg>
+                </button>
+              </div>
+              {(message.debug || message.toolCalls) && (
+                <button
+                  onClick={() => setShowDebug(!showDebug)}
+                  className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110"
+                  title={showDebug ? 'Detayları Gizle' : 'Detayları Göster'}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 17 10 11 4 5"/>
+                    <line x1="12" y1="19" x2="20" y2="19"/>
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+          {(message.debug || message.toolCalls) && showDebug && (
+              <div className={`mt-3 p-3 rounded text-xs ${isDarkMode ? 'bg-dark-bg/50' : 'bg-gray-50'}`}>
                   {message.debug && (
                     <div>
-                      <div className="font-semibold mb-2">📊 Response Timeline:</div>
+                      <div className="font-semibold mb-3">Response Timeline:</div>
                       
                       {/* Unified Timeline Table */}
                       {message.debug.timeline_events && message.debug.timeline_events.length > 0 && (() => {
@@ -792,14 +877,15 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                                   <td className={`px-2 py-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>{event.order}.</td>
                                   <td className={`px-2 py-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>{agent_name}</td>
                                   <td className="px-2 py-1 truncate">
-                                    <span className={`${colorClass} ${isDarkMode ? 'text-dark-text' : ''}`}>{event.label}</span>
-                                    {' '}
+                                    
                                     <button
                                       onClick={() => {
                                         setSelectedEvent(event);
                                       }}
                                       className={`cursor-pointer hover:opacity-80 ${colorClass}`}
                                     >
+                                      <span className={`${colorClass} ${isDarkMode ? 'text-dark-text' : ''}`}>{event.label}</span>
+                                    {' '}
                                       🔍
                                     </button>
                                      
@@ -899,9 +985,7 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                       )}
                     </div>
                   )}
-                </div>
-              )}
-            </div>
+              </div>
           )}
         </div>
 

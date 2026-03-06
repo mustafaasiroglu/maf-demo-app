@@ -1,272 +1,377 @@
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
-import json
+"""
+Fund knowledge tool backed by Azure AI Search (funds_index).
 
-# Dummy fund knowledge base
-FUND_DATABASE = {
-    "GTA": {
-        "fund_code": "GTA",
-        "fund_name": "Garanti Teknoloji A Tipi Fon",
-        "fund_name_en": "Garanti Technology Type A Fund",
-        "description": "Garanti Teknoloji A Tipi Fon, yerli ve yabancı teknoloji şirketlerinin hisse senetlerine yatırım yapan bir A tipi fonudur. Fon, yüksek büyüme potansiyeline sahip teknoloji şirketlerini portföyüne alarak yatırımcılara uzun vadede değer katmayı hedefler.",
-        "risk_level": "Yüksek",
-        "risk_score": 7,
-        "category": "Hisse Senedi Fonu",
-        "inception_date": "2020-03-15",
-        "fund_manager": "Garanti Portföy Yönetimi A.Ş.",
-        "management_fee": "2.5%",
-        "total_value": "₺125,000,000",
-        "returns": {
-            "1_day": 0.35,
-            "1_week": 2.8,
-            "1_month": 5.2,
-            "3_months": 12.5,
-            "6_months": 18.3,
-            "1_year": 35.7,
-            "ytd": 4.8
-        },
-        "top_holdings": [
-            {"name": "Microsoft", "weight": "12.5%"},
-            {"name": "Apple", "weight": "11.2%"},
-            {"name": "NVIDIA", "weight": "10.8%"},
-            {"name": "Aselsan", "weight": "8.5%"},
-            {"name": "Vestel", "weight": "6.3%"}
-        ]
-    },
-    "GOL": {
-        "fund_code": "GOL",
-        "fund_name": "Garanti Ons Altın Fonu",
-        "fund_name_en": "Garanti Ounce Gold Fund",
-        "description": "Garanti Ons Altın Fonu, portföyünü ağırlıklı olarak altın ve değerli madenler üzerinden değerlendiren bir fondur. Enflasyona karşı koruma sağlamak ve değer koruma amaçlı yatırımcılara hitap eder.",
-        "risk_level": "Orta",
-        "risk_score": 5,
-        "category": "Değerli Madenler Fonu",
-        "inception_date": "2018-06-20",
-        "fund_manager": "Garanti Portföy Yönetimi A.Ş.",
-        "management_fee": "1.5%",
-        "total_value": "₺250,000,000",
-        "returns": {
-            "1_day": 0.15,
-            "1_week": 1.2,
-            "1_month": 3.5,
-            "3_months": 8.2,
-            "6_months": 15.8,
-            "1_year": 28.5,
-            "ytd": 3.2
-        },
-        "top_holdings": [
-            {"name": "Fiziki Altın", "weight": "85.0%"},
-            {"name": "Altın Vadeli İşlemler", "weight": "10.0%"},
-            {"name": "Gümüş", "weight": "3.0%"},
-            {"name": "Nakit", "weight": "2.0%"}
-        ]
-    },
-    "GTL": {
-        "fund_code": "GTL",
-        "fund_name": "Garanti Likit Fon",
-        "fund_name_en": "Garanti Liquid Fund",
-        "description": "Garanti Likit Fon, kısa vadeli para piyasası araçlarına yatırım yaparak yatırımcılara yüksek likidite ve düşük risk ile getiri sağlamayı hedefleyen bir fondur. Günlük nakit ihtiyaçları için ideal bir yatırım aracıdır.",
-        "risk_level": "Düşük",
-        "risk_score": 2,
-        "category": "Likit Fon",
-        "inception_date": "2015-01-10",
-        "fund_manager": "Garanti Portföy Yönetimi A.Ş.",
-        "management_fee": "0.5%",
-        "total_value": "₺500,000,000",
-        "returns": {
-            "1_day": 0.08,
-            "1_week": 0.5,
-            "1_month": 2.1,
-            "3_months": 6.5,
-            "6_months": 13.2,
-            "1_year": 26.8,
-            "ytd": 2.0
-        },
-        "top_holdings": [
-            {"name": "Devlet Tahvili", "weight": "45.0%"},
-            {"name": "Hazine Bonosu", "weight": "35.0%"},
-            {"name": "Banka Bonosu", "weight": "15.0%"},
-            {"name": "Nakit", "weight": "5.0%"}
-        ]
-    }
+Environment variables required:
+  AZURE_SEARCH_ENDPOINT  – e.g. https://<service>.search.windows.net
+  AZURE_SEARCH_API_KEY   – Admin or Query API key
+"""
+
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+import os
+import json
+import requests
+
+# ── Azure AI Search configuration ────────────────────────────────────────────
+SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
+SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY")
+INDEX_NAME = "funds_index"
+API_VERSION = "2024-07-01"
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "api-key": SEARCH_API_KEY or "",
 }
 
-def search_fund_info(fund_name: str, query_type: Optional[str] = None) -> Dict[str, Any]:
+DEFAULT_FIELDS = [
+    "code",
+    "title_tr",
+    "title_en",
+    "category_tr",
+    "category_en",
+    "alias_tr",
+    "alias_en",
+    "first_offering_date",
+    "annual_management_fee",
+    "risk_level",
+    "compare_measure",
+    "taxation",
+    "trading_terms",
+    "investment_strategy",
+    "investor_profile",
+    "pdf_url",
+    "is_recommended",
+    "latest_price_close",
+    "latest_price_date",
+    "net_asset_value",
+    "distribution_json",
+    "return_weekly",
+    "return_one_month",
+    "return_three_month",
+    "return_six_month",
+    "return_from_begin_of_year",
+    "return_one_year",
+    "return_three_year",
+    "return_first_offering_date",
+    "documents_json",
+]
+
+
+def _query_search_index(
+    query: str,
+    *,
+    search_fields: Optional[List[str]] = None,
+    top: int = 5,
+    filters: Optional[str] = None,
+    fields: Optional[List[str]] = None,
+) -> List[dict]:
     """
-    Search for fund information in the knowledge base.
-    
+    Low-level helper that posts a search request to Azure AI Search.
+
+    Returns the list of matching documents (value array).
+    Raises on HTTP errors.
+    """
+    if not SEARCH_ENDPOINT or not SEARCH_API_KEY:
+        raise ValueError(
+            "Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY environment variables."
+        )
+
+    url = f"{SEARCH_ENDPOINT}/indexes/{INDEX_NAME}/docs/search?api-version={API_VERSION}"
+
+    body: Dict[str, Any] = {
+        "search": query,
+        "top": top,
+        "count": True,
+    }
+    if filters:
+        body["filter"] = filters
+    if fields:
+        body["select"] = ",".join(fields)
+    if search_fields:
+        body["searchFields"] = ",".join(search_fields)
+
+    resp = requests.post(url, headers=HEADERS, json=body)
+    resp.raise_for_status()
+
+    data = resp.json()
+    return data.get("value", [])
+
+
+# Fields returned for search results (basic overview)
+SEARCH_RESULT_FIELDS = [
+    "code",
+    "title_tr",
+    "category_tr",
+    "latest_price_close",
+    "latest_price_date",
+    "risk_level",
+    "distribution_json",
+    "return_weekly",
+    "return_one_month",
+    "return_three_month",
+    "return_six_month",
+    "return_from_begin_of_year",
+    "return_one_year",
+    "return_three_year",
+    "return_first_offering_date",
+    "is_recommended",
+    "investment_strategy",
+    "investor_profile",
+    "documents_json",
+]
+
+# ── Public tool functions ────────────────────────────────────────────────────
+
+
+def search_funds(search_query: str) -> Dict[str, Any]:
+    """
+    Search for investment funds in Azure AI Search and return basic details.
+
     Args:
-        fund_name: Fund code or name to search (e.g., "GTA", "GOL", "GTL")
-        query_type: Optional specific query type (e.g., "risk", "returns", "description")
-    
+        search_query: Free-text query to search (e.g., "altın", "teknoloji", "likit")
+
     Returns:
-        Dictionary containing fund information and debug metadata
+        Dictionary containing a list of matching funds with basic details.
     """
     start_time = datetime.now()
-    
-    # Normalize fund name to uppercase for matching
-    fund_code = fund_name.upper().strip()
-    
-    # Try to find exact match or partial match
-    fund_data = None
-    for code, data in FUND_DATABASE.items():
-        if code == fund_code or code in fund_code or fund_code in data["fund_name"].upper():
-            fund_data = data
-            fund_code = code
-            break
-    
-    if not fund_data:
-        # Return all fund codes if no match found
+
+    try:
+        # Try exact code filter first
+        query_upper = search_query.strip().upper()
+        results = _query_search_index(
+            "*",
+            filters=f"code eq '{query_upper}'",
+            top=1,
+            fields=SEARCH_RESULT_FIELDS,
+        )
+
+        # If no exact match, do a full-text search
+        if not results:
+            results = _query_search_index(
+                search_query,
+                search_fields=["title_tr", "title_en", "category_tr", "category_en", "investment_strategy", "investor_profile"],
+                top=5,
+                fields=SEARCH_RESULT_FIELDS,
+            )
+
+        # Strip search metadata
+        for doc in results:
+            doc.pop("@search.score", None)
+
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+
+        if not results:
+            all_funds = _query_search_index("*", top=50, fields=["code", "title_tr"])
+            available = [{"code": f.get("code", ""), "title_tr": f.get("title_tr", "")} for f in all_funds if f.get("code")]
+            return {
+                "type": "tool_result",
+                "data": {
+                    "found": False,
+                    "message": f"Fon bulunamadı: {search_query}",
+                    "available_funds": available[:20],
+                    "suggestion": "Lütfen geçerli bir fon kodu veya anahtar kelime deneyin.",
+                },
+                "debug": {
+                    "tool_name": "search_funds",
+                    "query": search_query,
+                    "execution_time_ms": execution_time,
+                    "result": "not_found",
+                },
+            }
+
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": True,
+                "funds": results,
+                "total_results": len(results),
+            },
+            "debug": {
+                "tool_name": "search_funds",
+                "query": search_query,
+                "execution_time_ms": execution_time,
+                "result": "success",
+            },
+        }
+
+    except Exception as exc:
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
         return {
             "type": "tool_result",
             "data": {
                 "found": False,
-                "message": f"Fon bulunamadı: {fund_name}",
-                "available_funds": list(FUND_DATABASE.keys()),
-                "suggestion": "Lütfen GTA, GOL veya GTL fon kodlarından birini deneyin."
+                "message": f"Arama sırasında hata oluştu: {str(exc)}",
             },
             "debug": {
-                "tool_name": "search_fund_info",
-                "query": fund_name,
-                "query_type": query_type,
-                "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
-                "result": "not_found"
-            }
+                "tool_name": "search_funds",
+                "query": search_query,
+                "execution_time_ms": execution_time,
+                "result": "error",
+                "error": str(exc),
+            },
         }
-    
-    # Filter response based on query type if specified
-    if query_type:
-        query_type_lower = query_type.lower()
-        if "risk" in query_type_lower:
-            filtered_data = {
-                "fund_code": fund_data["fund_code"],
-                "fund_name": fund_data["fund_name"],
-                "risk_level": fund_data["risk_level"],
-                "risk_score": fund_data["risk_score"],
-                "description": fund_data["description"]
+
+
+def get_fund_details(fund_code: str) -> Dict[str, Any]:
+    """
+    Get full details for a specific fund by its fund code.
+
+    Args:
+        fund_code: The fund code (e.g., "GTA", "GOL", "GTL")
+
+    Returns:
+        Dictionary containing all available fund details.
+    """
+    start_time = datetime.now()
+
+    try:
+        fund_code_upper = fund_code.strip().upper()
+        results = _query_search_index(
+            "*",
+            filters=f"code eq '{fund_code_upper}'",
+            top=1,
+            fields=DEFAULT_FIELDS,
+        )
+
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+
+        if not results:
+            all_funds = _query_search_index("*", top=50, fields=["code"])
+            available_codes = [f.get("code", "") for f in all_funds if f.get("code")]
+            return {
+                "type": "tool_result",
+                "data": {
+                    "found": False,
+                    "message": f"Fon bulunamadı: {fund_code}",
+                    "available_funds": available_codes[:20],
+                    "suggestion": "Lütfen geçerli bir fon kodu deneyin.",
+                },
+                "debug": {
+                    "tool_name": "get_fund_details",
+                    "fund_code": fund_code,
+                    "execution_time_ms": execution_time,
+                    "result": "not_found",
+                },
             }
-        elif "return" in query_type_lower or "getiri" in query_type_lower or "performan" in query_type_lower:
-            filtered_data = {
-                "fund_code": fund_data["fund_code"],
-                "fund_name": fund_data["fund_name"],
-                "returns": fund_data["returns"]
-            }
-        elif "holding" in query_type_lower or "portföy" in query_type_lower:
-            filtered_data = {
-                "fund_code": fund_data["fund_code"],
-                "fund_name": fund_data["fund_name"],
-                "top_holdings": fund_data["top_holdings"]
-            }
-        else:
-            filtered_data = fund_data
-    else:
-        filtered_data = fund_data
-    
-    execution_time = (datetime.now() - start_time).total_seconds() * 1000
-    
-    return {
-        "type": "tool_result",
-        "data": {
-            "found": True,
-            "fund": filtered_data
-        },
-        "debug": {
-            "tool_name": "search_fund_info",
-            "query": fund_name,
-            "query_type": query_type,
-            "matched_fund_code": fund_code,
-            "execution_time_ms": execution_time,
-            "result": "success"
+
+        fund_data = results[0]
+        fund_data.pop("@search.score", None)
+
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": True,
+                "fund": fund_data,
+            },
+            "debug": {
+                "tool_name": "get_fund_details",
+                "fund_code": fund_code,
+                "matched_fund_code": fund_data.get("code", ""),
+                "execution_time_ms": execution_time,
+                "result": "success",
+            },
         }
-    }
+
+    except Exception as exc:
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": False,
+                "message": f"Fon detayları alınırken hata oluştu: {str(exc)}",
+            },
+            "debug": {
+                "tool_name": "get_fund_details",
+                "fund_code": fund_code,
+                "execution_time_ms": execution_time,
+                "result": "error",
+                "error": str(exc),
+            },
+        }
+
 
 def compare_funds(fund_codes: List[str], metric: str = "returns") -> Dict[str, Any]:
     """
     Compare multiple funds based on a specific metric.
-    
+
     Args:
         fund_codes: List of fund codes to compare
         metric: Metric to compare (e.g., "returns", "risk", "fees")
-    
+
     Returns:
         Dictionary containing comparison data and debug metadata
     """
     start_time = datetime.now()
-    
-    comparison_data = []
-    for code in fund_codes:
-        result = search_fund_info(code)
-        if result["data"]["found"]:
-            comparison_data.append(result["data"]["fund"])
-    
-    if not comparison_data:
+
+    # Build an OData filter for all requested fund codes
+    filter_clauses = " or ".join(
+        f"code eq '{code.strip().upper()}'" for code in fund_codes
+    )
+
+    try:
+        results = _query_search_index(
+            "*",
+            filters=filter_clauses,
+            top=len(fund_codes),
+            fields=DEFAULT_FIELDS,
+        )
+
+        # Strip search metadata
+        for doc in results:
+            doc.pop("@search.score", None)
+
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+
+        if not results:
+            return {
+                "type": "tool_result",
+                "data": {
+                    "found": False,
+                    "message": "Karşılaştırmak için geçerli fon bulunamadı.",
+                },
+                "debug": {
+                    "tool_name": "compare_funds",
+                    "fund_codes": fund_codes,
+                    "metric": metric,
+                    "execution_time_ms": execution_time,
+                    "result": "not_found",
+                },
+            }
+
         return {
             "type": "tool_result",
             "data": {
-                "found": False,
-                "message": "Karşılaştırmak için geçerli fon bulunamadı."
+                "found": True,
+                "comparison": results,
+                "metric": metric,
+                "funds_compared": len(results),
             },
             "debug": {
                 "tool_name": "compare_funds",
                 "fund_codes": fund_codes,
                 "metric": metric,
-                "execution_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
-                "result": "not_found"
-            }
+                "execution_time_ms": execution_time,
+                "result": "success",
+            },
         }
-    
-    execution_time = (datetime.now() - start_time).total_seconds() * 1000
-    
-    return {
-        "type": "tool_result",
-        "data": {
-            "found": True,
-            "comparison": comparison_data,
-            "metric": metric,
-            "funds_compared": len(comparison_data)
-        },
-        "debug": {
-            "tool_name": "compare_funds",
-            "fund_codes": fund_codes,
-            "metric": metric,
-            "execution_time_ms": execution_time,
-            "result": "success"
-        }
-    }
 
-def list_all_funds(sort_by: str = "returns_1_week") -> Dict[str, Any]:
-    """
-    List all available funds, optionally sorted by a metric.
-    
-    Args:
-        sort_by: Metric to sort by (e.g., "returns_1_week", "risk_score", "total_value")
-    
-    Returns:
-        Dictionary containing all funds and debug metadata
-    """
-    start_time = datetime.now()
-    
-    funds = list(FUND_DATABASE.values())
-    
-    # Sort if requested
-    if "return" in sort_by.lower() and "1_week" in sort_by:
-        funds.sort(key=lambda x: x["returns"]["1_week"], reverse=True)
-    elif "risk" in sort_by.lower():
-        funds.sort(key=lambda x: x["risk_score"])
-    
-    execution_time = (datetime.now() - start_time).total_seconds() * 1000
-    
-    return {
-        "type": "tool_result",
-        "data": {
-            "funds": funds,
-            "total_funds": len(funds),
-            "sorted_by": sort_by
-        },
-        "debug": {
-            "tool_name": "list_all_funds",
-            "sort_by": sort_by,
-            "execution_time_ms": execution_time,
-            "result": "success"
+    except Exception as exc:
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": False,
+                "message": f"Karşılaştırma sırasında hata oluştu: {str(exc)}",
+            },
+            "debug": {
+                "tool_name": "compare_funds",
+                "fund_codes": fund_codes,
+                "metric": metric,
+                "execution_time_ms": execution_time,
+                "result": "error",
+                "error": str(exc),
+            },
         }
-    }
+
+
+

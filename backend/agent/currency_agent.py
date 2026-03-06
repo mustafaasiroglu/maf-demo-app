@@ -5,6 +5,7 @@ from typing import Annotated, Optional, List
 
 from pydantic import Field
 from agent_framework.azure import AzureOpenAIChatClient
+from agent import ReducingChatMessageStore
 from tools.pii import pii_unmask_args
 
 logger = logging.getLogger(__name__)
@@ -17,10 +18,12 @@ logger = logging.getLogger(__name__)
 @pii_unmask_args
 def get_exchange_rate(
     currency_code: Annotated[str, Field(description="The currency code to look up (e.g., USD, EUR, GBP, XAU)")],
+    date_start: Annotated[Optional[str], Field(description="Start date for historical range (DD.MM.YYYY or YYYY-MM-DD). Omit for current rate.")] = None,
+    date_end: Annotated[Optional[str], Field(description="End date for historical range (DD.MM.YYYY or YYYY-MM-DD). Omit for current rate.")] = None,
 ) -> str:
-    """Get the current exchange rate for a specific currency against Turkish Lira (TRY). Use this for questions like 'Dolar kaç?', 'Euro kuru nedir?', 'Altın fiyatı'."""
+    """Get exchange rate(s) for a currency against TRY. Without dates returns the current rate; with date_start/date_end returns a historical series (daily for ≤30 days, weekly for 31-120 days, monthly for 121+ days). Use for 'Dolar kaç?', 'Euro kuru', 'Son 3 ayda dolar', 'Altın fiyatı', 'Doların son 1 haftalık seyri', 'Euro grafiği'."""
     from tools.currency import get_exchange_rate as _get_exchange_rate
-    result = _get_exchange_rate(currency_code)
+    result = _get_exchange_rate(currency_code, date_start=date_start, date_end=date_end)
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -46,16 +49,6 @@ def convert_currency(
     return json.dumps(result, ensure_ascii=False)
 
 
-@pii_unmask_args
-def get_currency_history(
-    currency_code: Annotated[str, Field(description="The currency code to get history for (e.g., USD, EUR)")],
-) -> str:
-    """Get 7-day price history for a currency. Use for 'Doların son 1 haftalık seyri', 'Euro grafiği'."""
-    from tools.currency import get_currency_history as _get_currency_history
-    result = _get_currency_history(currency_code)
-    return json.dumps(result, ensure_ascii=False)
-
-
 # ────────────────────────────────────────────────────────────
 # Agent factory
 # ────────────────────────────────────────────────────────────
@@ -78,6 +71,11 @@ Guidelines:
 5. For gold prices, clarify whether it's gram or ounce
 6. Be helpful and professional
 7. If asked about investment funds or portfolio questions, suggest that those topics can be handled by the investment specialist
+8. When discussing currency rate history or trends over a date range, include a chart using this tag: <graph code="XXXXTRY" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
+   - Use 6-letter pair code ending with TRY: e.g. <graph code="USDTRY" start="01.01.2026" end="28.02.2026"></graph>
+   - You can compare currencies: <graph code="USDTRY,EURTRY" start="01.01.2026" end="28.02.2026"></graph>
+   - The frontend renders an interactive chart from this tag automatically
+   - Place the tag after your textual explanation
 
 Remember: You must respond in Turkish to all user queries."""
 
@@ -104,9 +102,9 @@ def create_currency_agent(deployment: str | None = None):
             get_exchange_rate,
             list_exchange_rates,
             convert_currency,
-            get_currency_history,
         ],
         max_tokens=2048,
+        chat_message_store_factory=ReducingChatMessageStore,
     )
 
     return agent

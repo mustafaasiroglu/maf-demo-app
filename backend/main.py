@@ -59,6 +59,180 @@ class ChatResponse(BaseModel):
 async def health():
     return {"message": "Investment Bot API", "status": "running"}
 
+
+class PriceHistoryRequest(BaseModel):
+    fund_code: str | None = None
+    fund_codes: list[str] | None = None
+    start_date: str
+    end_date: str | None = None
+
+
+# ── Currency pair helpers for pricehistory endpoint ──────────────────────────
+
+def _is_currency_pair(code: str) -> bool:
+    """Return True for 6-letter codes ending with TRY (e.g. USDTRY, EURTRY)."""
+    return len(code) == 6 and code.endswith("TRY") and code[:3] != "TRY"
+
+
+def _fetch_currency_as_fund_series(
+    pair_code: str, start_date: str, end_date: str | None
+) -> dict:
+    """Call get_exchange_rate with a date range and reshape the result to
+    match the FundSeries dict the chart frontend expects."""
+    from tools.currency import get_exchange_rate
+
+    currency_code = pair_code[:3]  # e.g. "USD" from "USDTRY"
+    result = get_exchange_rate(currency_code, date_start=start_date, date_end=end_date)
+
+    if result.get("status") != "success":
+        return {
+            "found": False,
+            "fund_code": pair_code,
+            "message": result.get("message", "Veri bulunamadı."),
+        }
+
+    data = result["data"]
+
+    # Historical range result (has "history" list)
+    if "history" not in data:
+        return {
+            "found": False,
+            "fund_code": pair_code,
+            "message": f"{pair_code} grafiği için tarih aralığı gerekli.",
+        }
+
+    prices = []
+    for point in data["history"]:
+        # Convert YYYY-MM-DD → DD.MM.YYYY to match TEFAS format
+        parts = point["date"].split("-")
+        tarih = f"{parts[2]}.{parts[1]}.{parts[0]}"
+        prices.append({"tarih": tarih, "fiyat": point["buy_rate"]})
+
+    if not prices:
+        return {
+            "found": False,
+            "fund_code": pair_code,
+            "message": f"{pair_code} için belirtilen aralıkta veri bulunamadı.",
+        }
+
+    fiyatlar = [p["fiyat"] for p in prices if p["fiyat"] is not None]
+    first_price = fiyatlar[0] if fiyatlar else None
+    last_price = fiyatlar[-1] if fiyatlar else None
+    change_pct = (
+        round((last_price - first_price) / first_price * 100, 2)
+        if first_price and last_price and first_price != 0
+        else None
+    )
+
+    # Reformat date strings to DD.MM.YYYY
+    ds = data.get("date_start", start_date)
+    de = data.get("date_end", end_date or "")
+    for field, val in [("ds", ds), ("de", de)]:
+        if "-" in val:
+            p = val.split("-")
+            if field == "ds":
+                ds = f"{p[2]}.{p[1]}.{p[0]}"
+            else:
+                de = f"{p[2]}.{p[1]}.{p[0]}"
+
+    return {
+        "found": True,
+        "fund_code": pair_code,
+        "start_date": ds,
+        "end_date": de,
+        "total_days": data.get("total_days", 0),
+        "record_count": len(prices),
+        "summary": {
+            "first_price": first_price,
+            "last_price": last_price,
+            "min_price": min(fiyatlar) if fiyatlar else None,
+            "max_price": max(fiyatlar) if fiyatlar else None,
+            "change_percent": change_pct,
+        },
+        "prices": prices,
+    }
+
+
+@app.post("/api/pricehistory")
+async def price_history(request: PriceHistoryRequest):
+    """
+    Get historical fund prices from TEFAS or currency rates from TCMB.
+    Accepts fund_code (single) or fund_codes (list, max 3) with start_date and optional end_date.
+    Six-letter codes ending with TRY (e.g. USDTRY, EURTRY) are treated as currency pairs
+    and fetched via the TCMB currency tool instead of TEFAS.
+    """
+    from tools.fund_price_history import get_fund_price_history
+
+    # Resolve fund codes list (support both single and multi)
+    codes: list[str] = []
+    if request.fund_codes:
+        codes = [c.strip().upper() for c in request.fund_codes if c.strip()]
+    elif request.fund_code:
+        codes = [c.strip().upper() for c in request.fund_code.split(",") if c.strip()]
+
+    if not codes:
+        raise HTTPException(status_code=400, detail="fund_code veya fund_codes gerekli.")
+    if len(codes) > 3:
+        raise HTTPException(status_code=400, detail="En fazla 3 fon/döviz karşılaştırılabilir.")
+
+    results = []
+    for code in codes:
+        if _is_currency_pair(code):
+            result = _fetch_currency_as_fund_series(code, request.start_date, request.end_date)
+        else:
+            raw = get_fund_price_history(
+                fund_code=code,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            )
+            result = raw.get("data", {})
+        results.append(result)
+
+    # If any fund has data, return success
+    found_any = any(r.get("found", False) for r in results)
+    if not found_any:
+        raise HTTPException(status_code=404, detail="Seçilen fonlar/kurlar için veri bulunamadı.")
+
+    # Single fund: return flat (backward compatible)
+    if len(results) == 1:
+        return results[0]
+
+    # Multiple funds: return as list
+    return {"funds": results}
+
+
+class DistributionHistoryRequest(BaseModel):
+    fund_code: str
+    start_date: str
+    end_date: str | None = None
+    include_history: bool = False
+
+
+@app.post("/api/distributionhistory")
+async def distribution_history(request: DistributionHistoryRequest):
+    """
+    Get fund asset-allocation (distribution) data from TEFAS.
+    By default returns only the latest date. Set include_history=true for all dates.
+    """
+    from tools.fund_distribution_history import get_distribution_history
+
+    code = request.fund_code.strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="fund_code gerekli.")
+
+    result = get_distribution_history(
+        fund_code=code,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        include_history=request.include_history,
+    )
+    data = result.get("data", {})
+    if not data.get("found", False):
+        raise HTTPException(status_code=404, detail=data.get("message", "Veri bulunamadı."))
+
+    return data
+
+
 @app.get("/user/me")
 async def get_current_user():
     """Get current logged-in user information."""
@@ -70,6 +244,9 @@ async def chat_stream(request: ChatRequest):
     Streaming chat endpoint using SSE.
     Returns structured events: {type: "message"|"tool_call"|"error"|"done", data: {...}, debug: {...}}
     """
+    import logging as _logging
+    _log = _logging.getLogger("chat_stream")
+
     session_id = request.session_id
     user_message = request.message
     pii_masking_enabled = request.pii_masking_enabled
@@ -82,25 +259,36 @@ async def chat_stream(request: ChatRequest):
     # Recreate if the model changed since last request
     is_followup = False
     pending_request_id = None
+    # Normalize model: treat None/empty as the default deployment
+    # so that requests missing the model field don't trigger a false
+    # workflow recreation (which would wipe conversation history).
+    effective_model = requested_model or agent.deployment
     if session_id not in sessions:
+        _log.info(f"📌 New session {session_id}, creating workflow (model={effective_model})")
         sessions[session_id] = {
-            "workflow": agent.create_new_workflow(model=requested_model),
+            "workflow": agent.create_new_workflow(model=effective_model),
             "pending_request_id": None,
-            "model": requested_model,
+            "model": effective_model,
         }
     else:
-        prev_model = sessions[session_id].get("model")
-        if requested_model and requested_model != prev_model:
-            # Model changed — create a fresh workflow with the new model
+        prev_model = sessions[session_id].get("model") or agent.deployment
+        if effective_model != prev_model:
+            # Model truly changed — create a fresh workflow with the new model
+            _log.info(f"🔄 Model changed ({prev_model} → {effective_model}), recreating workflow for session {session_id}")
             sessions[session_id] = {
-                "workflow": agent.create_new_workflow(model=requested_model),
+                "workflow": agent.create_new_workflow(model=effective_model),
                 "pending_request_id": None,
-                "model": requested_model,
+                "model": effective_model,
             }
         else:
             pending_request_id = sessions[session_id].get("pending_request_id")
             if pending_request_id:
                 is_followup = True
+    
+    _log.info(
+        f"📨 session={session_id} is_followup={is_followup} "
+        f"pending_request_id={pending_request_id} model={effective_model}"
+    )
     
     # Apply PII masking if enabled
     pii_replacements: list = []
@@ -203,6 +391,12 @@ async def chat_stream(request: ChatRequest):
             }
             
         except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).error(f"SSE event_generator error: {e}", exc_info=True)
+            # Reset pending_request_id so the next request uses run_stream
+            # instead of retrying with a stale/invalid request_id forever.
+            if session_id in sessions:
+                sessions[session_id]["pending_request_id"] = None
             # Send error event
             error_event = {
                 "type": "error",

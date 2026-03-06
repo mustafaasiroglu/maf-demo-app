@@ -17,51 +17,34 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from tools.pii import pii_unmask_args
 from tools.span_collector import drain_spans, spans_to_timeline, ToolStartQueue
+from agent import ReducingChatMessageStore
 from agent.currency_agent import create_currency_agent
 
 # Configure logging (use INFO level in production for better performance)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Maximum number of messages to keep in history (user+assistant pairs)
-MAX_HISTORY_MESSAGES = 6
-
-
-class ReducingChatMessageStore(ChatMessageStore):
-    """A ChatMessageStore that automatically trims older messages when the history exceeds a limit.
-    
-    Keeps the most recent MAX_HISTORY_MESSAGES messages to prevent unbounded growth
-    while preserving enough context for coherent conversations.
-    """
-
-    def __init__(self, messages: Sequence[ChatMessage] | None = None, max_messages: int = MAX_HISTORY_MESSAGES):
-        super().__init__(messages)
-        self.max_messages = max_messages
-        self._trim()
-
-    def _trim(self) -> None:
-        """Trim messages to keep only the most recent max_messages."""
-        if len(self.messages) > self.max_messages:
-            trimmed = len(self.messages) - self.max_messages
-            self.messages = self.messages[-self.max_messages:]
-            logger.info(f"🗑️ History trimmed: removed {trimmed} oldest messages, keeping {len(self.messages)}")
-
-    async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
-        await super().add_messages(messages)
-        self._trim()
-
 
 # Tool functions with proper annotations for Microsoft Agent Framework
 @pii_unmask_args
-def search_fund_info(
-    fund_name: Annotated[str, Field(description="The fund code or name to search for (e.g., GTA, GOL, GTL)")],
-    query_type: Annotated[Optional[str], Field(description="Optional: Specific aspect to query (e.g., 'risk', 'returns', 'holdings')")] = None
+def search_funds(
+    search_query: Annotated[str, Field(description="Free-text query to search for funds (e.g., 'altın', 'teknoloji', 'likit', 'GTA')")],
 ) -> str:
-    """Search for information about investment funds. Use this to get fund details, risk levels, returns, and descriptions. Supports GTA (Technology Fund), GOL (Gold Fund), and GTL (Liquid Fund)."""
-    #delay 1 sec
+    """Search for investment funds by keyword or fund code. Returns basic details (name, code, price, strategy) for each matching fund. Use this to discover funds before getting full details."""
     time.sleep(1)
-    from tools.fund_knowledge import search_fund_info as _search_fund_info
-    result = _search_fund_info(fund_name, query_type)
+    from tools.fund_knowledge import search_funds as _search_funds
+    result = _search_funds(search_query)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@pii_unmask_args
+def get_fund_details(
+    fund_code: Annotated[str, Field(description="The fund code to get full details for (e.g., 'GTA', 'GOL', 'GTL')")],
+) -> str:
+    """Get all details for a specific investment fund by its fund code, including risk level, returns, holdings, fees, and trading rules. Use this after identifying the fund via search_funds or when the user asks about a specific fund code."""
+    time.sleep(1)
+    from tools.fund_knowledge import get_fund_details as _get_fund_details
+    result = _get_fund_details(fund_code)
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -77,14 +60,39 @@ def compare_funds(
 
 
 @pii_unmask_args
-def list_all_funds(
-    sort_by: Annotated[str, Field(description="Metric to sort funds by")] = "returns_1_week"
+def get_fund_price_history(
+    fund_code: Annotated[str, Field(description="The fund code to get price history for (e.g., 'GTA', 'GOL', 'GTL')")],
+    start_date: Annotated[str, Field(description="Start date in DD.MM.YYYY or YYYY-MM-DD format (e.g., '01.01.2026')")],
+    end_date: Annotated[Optional[str], Field(description="End date in DD.MM.YYYY or YYYY-MM-DD format. Defaults to today if not provided.")] = None,
 ) -> str:
-    """List all available investment funds, optionally sorted by a specific metric like returns or risk level."""
-    from tools.fund_knowledge import list_all_funds as _list_all_funds
-    #delay 1 sec
-    time.sleep(1)
-    result = _list_all_funds(sort_by)
+    """Get historical price data for a fund from TEFAS (Türkiye Elektronik Fon Alım Satım Platformu). Returns daily prices, portfolio size, and investor count. Automatically handles date ranges longer than 60 days by splitting into multiple queries."""
+    from tools.fund_price_history import get_fund_price_history as _get_fund_price_history
+    result = _get_fund_price_history(fund_code, start_date, end_date)
+    return json.dumps(result, ensure_ascii=False)
+
+
+# @pii_unmask_args
+# def get_distribution_history(
+#     fund_code: Annotated[str, Field(description="The fund code to get distribution/allocation for (e.g., 'GTZ', 'GTA', 'GOL')")],
+#     start_date: Annotated[str, Field(description="Start date in DD.MM.YYYY or YYYY-MM-DD format (e.g., '01.01.2026')")],
+#     end_date: Annotated[Optional[str], Field(description="End date in DD.MM.YYYY or YYYY-MM-DD format. Defaults to today if not provided.")] = None,
+#     include_history: Annotated[bool, Field(description="If true, return allocation data for all dates in the range. If false (default), return only the latest date's snapshot.")] = False,
+# ) -> str:
+#     """Get asset-allocation (distribution) history for a fund from TEFAS. Shows the percentage breakdown of the fund's portfolio across asset classes (stocks, bonds, gold, FX, etc.). By default returns only the latest snapshot. Set include_history=true for the full time series. Use only when the user asks about fund composition, allocation, distribution history."""
+#     from tools.fund_distribution_history import get_distribution_history as _get_distribution_history
+#     result = _get_distribution_history(fund_code, start_date, end_date, include_history)
+#     return json.dumps(result, ensure_ascii=False)
+
+
+@pii_unmask_args
+def fund_returns_by_date(
+    start_date: Annotated[str, Field(description="Start date in DD.MM.YYYY or YYYY-MM-DD format (e.g., '01.01.2026')")],
+    end_date: Annotated[Optional[str], Field(description="End date in DD.MM.YYYY or YYYY-MM-DD format. Defaults to today if not provided.")] = None,
+    funds: Annotated[Optional[str], Field(description="Comma-separated fund codes to query (e.g., 'GOL' or 'GOL,GTA'). Leave empty to get all funds.")] = None,
+) -> str:
+    """Get fund return percentages (daily, weekly, monthly, yearly, YTD, and custom period) from Garanti BBVA Portföy. Use this when the user asks about fund performance, returns, or yield over a specific date range."""
+    from tools.fund_returns import get_fund_returns as _get_fund_returns
+    result = _get_fund_returns(start_date, end_date, funds)
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -111,6 +119,7 @@ def get_customer_info(
     result = _get_customer_info(customer_id)
     return json.dumps(result, ensure_ascii=False)
 
+
 class InvestmentAgent:
     """
     Investment Bot Agent using Microsoft Agent Framework with Azure OpenAI GPT-5.1.
@@ -130,18 +139,26 @@ Key Responsibilities:
 - Compare funds and make recommendations based on customer needs
 - When the user asks about exchange rates, currency conversions, gold/silver prices, or any FX-related topic, hand off to the currency_agent
 - Always respond in Turkish, even though this prompt is in English
+- Use markdown formatting for better readability when listing funds, transactions, or comparisons
+- Make numbers and important details stand out using bold or bullet points
 
 Guidelines:
-1. Always use the provided tools to fetch accurate, up-to-date information
+1. Always use the provided tools to fetch accurate, up-to-date information about funds. Do NOT make up details that can be retrieved via tools.
 2. Respond in clear, professional Turkish
 3. Explain investment concepts in simple terms
-4. When comparing funds, present data in an organized, easy-to-understand format
-5. Always mention risk levels when discussing funds
-6. Be helpful and friendly while maintaining professionalism
 7. If you need to use multiple tools, call them sequentially to gather complete information
 8. For currency/FX questions (dolar, euro, sterlin, kur, döviz, altın fiyatı, çevir, etc.), always hand off to currency_agent
+9. When discussing a fund's price history or performance over a date range, or a currency's rate history, include a chart in your response using this special tag: <graph code="CODE" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
+   - Fund example: <graph code="GOL" start="01.01.2026" end="28.02.2026"></graph>
+   - Currency pair example: Use 6-letter pair codes ending with TRY: <graph code="USDTRY" start="01.01.2026" end="28.02.2026"></graph>
+   - Mixed comparison (fund vs currency, max 3 codes): <graph code="GOL,USDTRY,EURTRY" start="01.01.2026" end="28.02.2026"></graph>
+   - The frontend will automatically render an interactive price chart from this tag
+   - For multi-series comparisons, the chart normalizes prices to % change for fair comparison
+   - Use the actual fund/currency codes and the relevant date range from the conversation or tool results
+   - Place the graph tag after your textual explanation
 
-Remember: You must respond in Turkish to all user queries."""
+Remember: You must respond in Turkish to all user queries.
+Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current date for temporal awareness
         
         # Azure OpenAI base config
         self.azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -174,13 +191,16 @@ Remember: You must respond in Turkish to all user queries."""
             description="Yatırım fonları, portföy yönetimi ve müşteri bilgileri konusunda uzmanlaşmış asistan. Genel yatırım soruları için bu agent başlangıç noktasıdır.",
             instructions=self.system_prompt,
             tools=[
-                search_fund_info,
+                search_funds,
+                get_fund_details,
                 compare_funds,
-                list_all_funds,
+                get_fund_price_history,
+                fund_returns_by_date,
                 get_customer_transactions,
                 get_customer_info
             ],
             max_tokens=2048,
+            chat_message_store_factory=ReducingChatMessageStore,
         )
         
         currency_agent = create_currency_agent(deployment=deployment)
@@ -245,13 +265,14 @@ Remember: You must respond in Turkish to all user queries."""
         tool_messages = {
             "get_customer_info": "Müşteri bilgilerinize bakıyorum...",
             "get_customer_transactions": "İşlem geçmişinizi inceliyorum...",
-            "search_fund_info": "Fon detaylarını araştırıyorum...",
+            "search_funds": "Fonları araştırıyorum...",
+            "get_fund_details": "Fon detaylarını araştırıyorum...",
             "compare_funds": "Fonları karşılaştırıyorum...",
-            "list_all_funds": "Fonları listeliyorum...",
+            "get_fund_price_history": "Fon fiyat geçmişine bakıyorum...",
+            "fund_returns_by_date": "Fon getiri bilgilerini çekiyorum...",
             "get_exchange_rate": "Döviz kurunu kontrol ediyorum...",
             "list_exchange_rates": "Döviz kurlarını listeliyorum...",
             "convert_currency": "Döviz çevirisi yapıyorum...",
-            "get_currency_history": "Kur geçmişini inceliyorum...",
         }
         
         try:
@@ -293,11 +314,24 @@ Remember: You must respond in Turkish to all user queries."""
               # Start the workflow AFTER ToolStartQueue registers OTel callbacks,
               # so _on_llm_start fires for the very first LLM span.
               if is_followup and pending_request_id:
-                  responses = {
-                      pending_request_id: HandoffAgentUserRequest.create_response(user_message)
-                  }
-                  event_stream = workflow.send_responses_streaming(responses)
+                  try:
+                      responses = {
+                          pending_request_id: HandoffAgentUserRequest.create_response(user_message)
+                      }
+                      event_stream = workflow.send_responses_streaming(responses)
+                      logger.info(f"📨 Using send_responses_streaming (followup, request_id={pending_request_id})")
+                  except (ValueError, RuntimeError) as e:
+                      # Stale pending_request_id — the workflow no longer has this
+                      # request (e.g., SSE connection dropped before client got the
+                      # new request_id).  Fall back to run_stream so the user's
+                      # message is not lost.  The thread store still has history.
+                      logger.warning(
+                          f"⚠️ send_responses_streaming failed (stale request_id={pending_request_id}): {e}. "
+                          f"Falling back to workflow.run_stream."
+                      )
+                      event_stream = workflow.run_stream(user_message)
               else:
+                  logger.info(f"📨 Using workflow.run_stream (new run, is_followup={is_followup})")
                   event_stream = workflow.run_stream(user_message)
               # Helper to flush early OTel tool-start signals to the client
               # without waiting for the next workflow event.
@@ -356,7 +390,7 @@ Remember: You must respond in Turkish to all user queries."""
                   finally:
                       anext_task = None  # reset so next iteration creates a fresh task
 
-                  logger.info(f"📨 Workflow event: {type(wf_event).__name__}")
+            # logger.info(f"📨 Workflow event: {type(wf_event).__name__}")
                   # ── AgentRunUpdateEvent: streaming chunks from an agent ──
                   if isinstance(wf_event, AgentRunUpdateEvent):
                       agent_id = wf_event.executor_id

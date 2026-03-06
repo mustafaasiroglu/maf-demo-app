@@ -133,62 +133,220 @@ def _get_historical_rates(dt: datetime) -> Optional[Dict[str, Any]]:
         return None
 
 
-# ── Public API (same signatures as before) ───────────────────────────────────
+# ── Date helpers ─────────────────────────────────────────────────────────────
 
-def get_exchange_rate(currency_code: str) -> Dict[str, Any]:
-    """Get the current exchange rate for a specific currency against TRY from TCMB."""
+def _parse_date(s: str) -> datetime:
+    """Accept DD.MM.YYYY or YYYY-MM-DD."""
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s.strip(), fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Geçersiz tarih formatı: '{s}'. DD.MM.YYYY veya YYYY-MM-DD kullanın.")
+
+
+def _sample_dates(start: datetime, end: datetime) -> List[datetime]:
+    """Return the list of dates to query based on the range length.
+
+    0-30  days  → every calendar day
+    31-120 days → Fridays only  (weekday == 4)
+    121+  days  → last day of each month
+    """
+    total_days = (end - start).days
+    dates: List[datetime] = []
+
+    if total_days <= 30:
+        d = start
+        while d <= end:
+            dates.append(d)
+            d += timedelta(days=1)
+
+    elif total_days <= 120:
+        # Weekly – Fridays
+        d = start
+        days_until_friday = (4 - d.weekday()) % 7
+        d += timedelta(days=days_until_friday)
+        while d <= end:
+            dates.append(d)
+            d += timedelta(days=7)
+        # Ensure start/end boundaries are included
+        if not dates or dates[0] != start:
+            dates.insert(0, start)
+        if dates[-1] != end:
+            dates.append(end)
+
+    else:
+        # Monthly – last day of each month
+        dates.append(start)
+        # Walk through months, adding last day of each
+        cursor_year = start.year
+        cursor_month = start.month
+        while True:
+            # Last day of cursor_month
+            if cursor_month == 12:
+                last_day = datetime(cursor_year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = datetime(cursor_year, cursor_month + 1, 1) - timedelta(days=1)
+            if last_day > end:
+                break
+            if last_day > start:
+                dates.append(last_day)
+            # Advance to next month
+            if cursor_month == 12:
+                cursor_year += 1
+                cursor_month = 1
+            else:
+                cursor_month += 1
+        if dates[-1] != end:
+            dates.append(end)
+
+    return dates
+
+
+def _fetch_rate_for_date(
+    code: str, dt: datetime, *, max_lookback: int = 5
+) -> Optional[Dict[str, Any]]:
+    """Try to fetch a rate for *dt*; walk backwards up to *max_lookback*
+    calendar days if the target date has no data (weekend/holiday)."""
+    for offset in range(max_lookback + 1):
+        candidate = dt - timedelta(days=offset)
+        rates = _get_historical_rates(candidate)
+        if rates and code in rates and code != "_meta":
+            c = rates[code]
+            buy = c["forex_buy"] or c["banknote_buy"]
+            sell = c["forex_sell"] or c["banknote_sell"]
+            if buy:
+                return {
+                    "date": candidate.strftime("%Y-%m-%d"),
+                    "requested_date": dt.strftime("%Y-%m-%d"),
+                    "buy_rate": buy,
+                    "sell_rate": sell,
+                }
+    return None
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+def get_exchange_rate(
+    currency_code: str,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get exchange rate(s) for a currency against TRY from TCMB.
+
+    • No dates  → current rate from today.xml
+    • With dates → historical series with automatic sampling:
+        0-30 days   → daily
+        31-120 days → weekly (Fridays)
+        121+ days   → monthly
+    """
     code = currency_code.upper().strip()
 
+    # ── Current rate (no date range) ─────────────────────────────────────
+    if not date_start and not date_end:
+        try:
+            rates = _get_today_rates()
+        except Exception as e:
+            return {"status": "error", "message": f"TCMB verilerine erişilemedi: {str(e)}"}
+
+        meta = rates.get("_meta", {})
+
+        if code in rates and code != "_meta":
+            c = rates[code]
+            buy = c["forex_buy"] or c["banknote_buy"]
+            sell = c["forex_sell"] or c["banknote_sell"]
+
+            data: Dict[str, Any] = {
+                "code": c["code"],
+                "name": c["name"],
+                "name_en": c["name_en"],
+                "buy_rate": buy,
+                "sell_rate": sell,
+                "spread": round(sell - buy, 6) if (buy and sell) else None,
+                "banknote_buy": c["banknote_buy"],
+                "banknote_sell": c["banknote_sell"],
+                "base_currency": "TRY",
+                "source": "TCMB",
+                "date": meta.get("date", ""),
+                "bulletin": meta.get("bulletin", ""),
+            }
+            return {"status": "success", "data": data}
+
+        # Try partial match
+        matches = []
+        for key, val in rates.items():
+            if key == "_meta":
+                continue
+            if (code in val.get("name", "").upper()
+                    or code in val.get("name_en", "").upper()
+                    or code in key):
+                matches.append(key)
+
+        if matches:
+            return {
+                "status": "partial_match",
+                "message": f"'{currency_code}' bulunamadı. Şunu mu demek istediniz?",
+                "suggestions": matches,
+            }
+
+        available = [k for k in rates if k != "_meta"]
+        return {
+            "status": "not_found",
+            "message": f"'{currency_code}' kodlu döviz TCMB verilerinde bulunamadı.",
+            "available_currencies": available,
+        }
+
+    # ── Historical range ─────────────────────────────────────────────────
     try:
-        rates = _get_today_rates()
-    except Exception as e:
-        return {"status": "error", "message": f"TCMB verilerine erişilemedi: {str(e)}"}
+        start_dt = _parse_date(date_start) if date_start else None
+        end_dt = _parse_date(date_end) if date_end else None
+    except ValueError as ve:
+        return {"status": "error", "message": str(ve)}
 
-    meta = rates.get("_meta", {})
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if not start_dt:
+        start_dt = today
+    if not end_dt:
+        end_dt = today
+    if start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
 
-    if code in rates and code != "_meta":
-        c = rates[code]
-        buy = c["forex_buy"] or c["banknote_buy"]
-        sell = c["forex_sell"] or c["banknote_sell"]
+    sample_points = _sample_dates(start_dt, end_dt)
+    total_days = (end_dt - start_dt).days
+    if total_days <= 30:
+        sampling = "daily"
+    elif total_days <= 120:
+        sampling = "weekly"
+    else:
+        sampling = "monthly"
 
-        data: Dict[str, Any] = {
-            "code": c["code"],
-            "name": c["name"],
-            "name_en": c["name_en"],
-            "buy_rate": buy,
-            "sell_rate": sell,
-            "spread": round(sell - buy, 6) if (buy and sell) else None,
-            "banknote_buy": c["banknote_buy"],
-            "banknote_sell": c["banknote_sell"],
+    history: List[Dict[str, Any]] = []
+    for dt in sample_points:
+        point = _fetch_rate_for_date(code, dt)
+        if point:
+            history.append(point)
+
+    if not history:
+        return {"status": "error", "message": f"'{currency_code}' için belirtilen tarih aralığında veri bulunamadı."}
+
+    buy_rates = [h["buy_rate"] for h in history]
+
+    return {
+        "status": "success",
+        "data": {
+            "code": code,
             "base_currency": "TRY",
             "source": "TCMB",
-            "date": meta.get("date", ""),
-            "bulletin": meta.get("bulletin", ""),
-        }
-        return {"status": "success", "data": data}
-
-    # Try partial match
-    matches = []
-    for key, val in rates.items():
-        if key == "_meta":
-            continue
-        if (code in val.get("name", "").upper()
-                or code in val.get("name_en", "").upper()
-                or code in key):
-            matches.append(key)
-
-    if matches:
-        return {
-            "status": "partial_match",
-            "message": f"'{currency_code}' bulunamadı. Şunu mu demek istediniz?",
-            "suggestions": matches,
-        }
-
-    available = [k for k in rates if k != "_meta"]
-    return {
-        "status": "not_found",
-        "message": f"'{currency_code}' kodlu döviz TCMB verilerinde bulunamadı.",
-        "available_currencies": available,
+            "date_start": start_dt.strftime("%Y-%m-%d"),
+            "date_end": end_dt.strftime("%Y-%m-%d"),
+            "total_days": total_days,
+            "sampling": sampling,
+            "history": history,
+            "points": len(history),
+            "min_rate": min(buy_rates),
+            "max_rate": max(buy_rates),
+            "avg_rate": round(sum(buy_rates) / len(buy_rates), 4),
+        },
     }
 
 
@@ -285,51 +443,4 @@ def convert_currency(
     }
 
 
-def get_currency_history(currency_code: str) -> Dict[str, Any]:
-    """Get 7-day price history for a currency from TCMB.
 
-    Fetches each of the last 7 business days individually.
-    Weekends/holidays are skipped automatically.
-    """
-    code = currency_code.upper().strip()
-
-    today = datetime.now()
-    history: List[Dict[str, Any]] = []
-    attempts = 0
-    day = today
-
-    # Walk backwards up to 14 calendar days to find 7 data points
-    while len(history) < 7 and attempts < 14:
-        rates = _get_historical_rates(day)
-        if rates and code in rates and code != "_meta":
-            c = rates[code]
-            buy = c["forex_buy"] or c["banknote_buy"]
-            if buy:
-                history.append({
-                    "date": day.strftime("%Y-%m-%d"),
-                    "rate": buy,
-                })
-        day -= timedelta(days=1)
-        attempts += 1
-
-    if not history:
-        return {"status": "error", "message": f"'{currency_code}' için geçmiş veri bulunamadı."}
-
-    # Reverse so oldest first
-    history.reverse()
-    rates_only = [h["rate"] for h in history]
-
-    return {
-        "status": "success",
-        "data": {
-            "code": code,
-            "base_currency": "TRY",
-            "source": "TCMB",
-            "history": history,
-            "days_found": len(history),
-            "min_rate": min(rates_only),
-            "max_rate": max(rates_only),
-            "avg_rate": round(sum(rates_only) / len(rates_only), 4),
-            "current_rate": rates_only[-1],
-        },
-    }

@@ -360,8 +360,8 @@ def spans_to_timeline(
             input_content = _extract_messages_text(attrs, "gen_ai.input.messages")
             if input_content:
                 # Truncate very long input (system prompt + history can be huge)
-                if len(input_content) > 2000:
-                    request_input["messages"] = input_content[:2000] + "\n... [truncated]"
+                if len(input_content) > 4000:
+                    request_input["messages"] = input_content[:4000] + "\n... [truncated]"
                 else:
                     request_input["messages"] = input_content
 
