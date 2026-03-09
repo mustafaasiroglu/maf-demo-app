@@ -19,6 +19,7 @@ from tools.pii import pii_unmask_args
 from tools.span_collector import drain_spans, spans_to_timeline, ToolStartQueue
 from agent import ReducingChatMessageStore
 from agent.currency_agent import create_currency_agent
+from agent.customer_info_agent import create_customer_info_agent
 
 # Configure logging (use INFO level in production for better performance)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -96,28 +97,7 @@ def fund_returns_by_date(
     return json.dumps(result, ensure_ascii=False)
 
 
-@pii_unmask_args
-def get_customer_transactions(
-    customer_id: Annotated[Optional[str], Field(description="Customer ID (optional, uses current customer if not provided)")] = None,
-    fund_code: Annotated[Optional[str], Field(description="Filter by specific fund code (e.g., 'GTA', 'GOL')")] = None,
-    transaction_type: Annotated[Optional[str], Field(description="Filter by transaction type (BUY, SELL, DIVIDEND)")] = None,
-    limit: Annotated[int, Field(description="Maximum number of transactions to return")] = 50
-) -> str:
-    """Get customer's transaction history with investment funds. Can filter by fund code, transaction type, or date range."""
-    from tools.customer_transactions import get_customer_transactions as _get_customer_transactions
-    result = _get_customer_transactions(customer_id, fund_code, transaction_type, None, None, limit)
-    return json.dumps(result, ensure_ascii=False)
 
-
-@pii_unmask_args
-def get_customer_info(
-    customer_id: Annotated[Optional[str], Field(description="Customer ID (optional, uses current customer if not provided)")] = None
-) -> str:
-    """Get customer's personal information, portfolio holdings, and account details. Use this to answer 'Who am I?' or identity questions."""
-    from tools.customer_transactions import get_customer_info as _get_customer_info
-    time.sleep(0.5)  # Simulate a slight delay for fetching customer info
-    result = _get_customer_info(customer_id)
-    return json.dumps(result, ensure_ascii=False)
 
 
 class InvestmentAgent:
@@ -135,8 +115,8 @@ class InvestmentAgent:
 Key Responsibilities:
 - Answer questions about investment funds using relevant tools in Turkish
 - Provide information about fund performance, risks, and characteristics
-- Help customers understand their portfolio and transaction history
 - Compare funds and make recommendations based on customer needs
+- When the user asks about their personal info, portfolio, account details, or transaction history, hand off to the customer_info_agent
 - When the user asks about exchange rates, currency conversions, gold/silver prices, or any FX-related topic, hand off to the currency_agent
 - Always respond in Turkish, even though this prompt is in English
 - Use markdown formatting for better readability when listing funds, transactions, or comparisons
@@ -147,8 +127,9 @@ Guidelines:
 2. Respond in clear, professional Turkish
 3. Explain investment concepts in simple terms
 7. If you need to use multiple tools, call them sequentially to gather complete information
-8. For currency/FX questions (dolar, euro, sterlin, kur, döviz, altın fiyatı, çevir, etc.), always hand off to currency_agent
-9. When discussing a fund's price history or performance over a date range, or a currency's rate history, include a chart in your response using this special tag: <graph code="CODE" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
+8. For customer info, portfolio, or transaction history questions (müşteri bilgileri, portföy, hesap, işlem geçmişi, ben kimim, etc.), always hand off to customer_info_agent
+9. For currency/FX questions (dolar, euro, sterlin, kur, döviz, altın fiyatı, çevir, etc.), always hand off to currency_agent
+10. When discussing a fund's price history or performance over a date range, or a currency's rate history, include a chart in your response using this special tag: <graph code="CODE" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
    - Fund example: <graph code="GOL" start="01.01.2026" end="28.02.2026"></graph>
    - Currency pair example: Use 6-letter pair codes ending with TRY: <graph code="USDTRY" start="01.01.2026" end="28.02.2026"></graph>
    - Mixed comparison (fund vs currency, max 3 codes): <graph code="GOL,USDTRY,EURTRY" start="01.01.2026" end="28.02.2026"></graph>
@@ -166,7 +147,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         self.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
         self.default_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1-chat")
         
-        # Cache: deployment_name -> (investment_agent, currency_agent)
+        # Cache: deployment_name -> (investment_agent, currency_agent, customer_info_agent)
         self._agents_cache: dict[str, tuple] = {}
         
         # Build default agents eagerly so the first request is fast
@@ -175,7 +156,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         self.deployment = self.default_deployment
     
     def _get_or_create_agents(self, deployment: str) -> tuple:
-        """Return (investment_agent, currency_agent) for *deployment*, creating & caching if needed."""
+        """Return (investment_agent, currency_agent, customer_info_agent) for *deployment*, creating & caching if needed."""
         if deployment in self._agents_cache:
             return self._agents_cache[deployment]
         
@@ -188,7 +169,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         
         investment_agent = chat_client.as_agent(
             name="investment_agent",
-            description="Yatırım fonları, portföy yönetimi ve müşteri bilgileri konusunda uzmanlaşmış asistan. Genel yatırım soruları için bu agent başlangıç noktasıdır.",
+            description="Yatırım fonları ve fon performansı konusunda uzmanlaşmış asistan. Genel yatırım soruları için bu agent başlangıç noktasıdır.",
             instructions=self.system_prompt,
             tools=[
                 search_funds,
@@ -196,18 +177,17 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
                 compare_funds,
                 get_fund_price_history,
                 fund_returns_by_date,
-                get_customer_transactions,
-                get_customer_info
             ],
             max_tokens=2048,
             chat_message_store_factory=ReducingChatMessageStore,
         )
         
         currency_agent = create_currency_agent(deployment=deployment)
+        customer_info_agent = create_customer_info_agent(deployment=deployment)
         
-        self._agents_cache[deployment] = (investment_agent, currency_agent)
+        self._agents_cache[deployment] = (investment_agent, currency_agent, customer_info_agent)
         logger.info(f"🔧 Created agents for deployment: {deployment}")
-        return investment_agent, currency_agent
+        return investment_agent, currency_agent, customer_info_agent
     
     def create_new_workflow(self, model: str | None = None) -> Workflow:
         """Create a new Workflow instance for a session using HandoffBuilder.
@@ -221,18 +201,26 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         response it emits a RequestInfoEvent and waits for real user input.
         """
         deployment = model or self.default_deployment
-        investment_agent, currency_agent = self._get_or_create_agents(deployment)
+        investment_agent, currency_agent, customer_info_agent = self._get_or_create_agents(deployment)
         
         workflow = (
             HandoffBuilder(
                 name="garanti_investment_handoff",
-                participants=[investment_agent, currency_agent],
+                participants=[investment_agent, currency_agent, customer_info_agent],
             )
             .with_start_agent(investment_agent)
             .add_handoff(investment_agent, [currency_agent],
                          description="Döviz kurları, altın/gümüş fiyatları ve döviz çevirme işlemleri için döviz uzmanına yönlendir.")
+            .add_handoff(investment_agent, [customer_info_agent],
+                         description="Müşteri bilgileri, portföy durumu ve işlem geçmişi sorguları için müşteri bilgi uzmanına yönlendir.")
+            .add_handoff(customer_info_agent, [investment_agent],
+                         description="Yatırım fonları, fon performansı ve fon karşılaştırmaları için yatırım uzmanına yönlendir.")
+            .add_handoff(customer_info_agent, [currency_agent],
+                         description="Döviz kurları ve döviz çevirme işlemleri için döviz uzmanına yönlendir.")
             .add_handoff(currency_agent, [investment_agent],
-                         description="Yatırım fonları, portföy ve müşteri bilgileri için yatırım uzmanına yönlendir.")
+                         description="Yatırım fonları ve fon performansı için yatırım uzmanına yönlendir.")
+            .add_handoff(currency_agent, [customer_info_agent],
+                         description="Müşteri bilgileri ve işlem geçmişi için müşteri bilgi uzmanına yönlendir.")
             .build()
         )
         return workflow

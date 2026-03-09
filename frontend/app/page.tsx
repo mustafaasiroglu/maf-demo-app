@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import PriceChart from './PriceChart';
 
 function ColoredJson({ data, isDarkMode }: { data: any; isDarkMode: boolean }) {
@@ -88,14 +89,14 @@ function renderContentWithGraphs(content: string, isDarkMode: boolean) {
 
   // If no graph tags found, return plain markdown
   if (parts.length === 1 && parts[0].type === 'text') {
-    return <ReactMarkdown>{content}</ReactMarkdown>;
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
   }
 
   return (
     <>
       {parts.map((part, i) =>
         part.type === 'text' ? (
-          <ReactMarkdown key={i}>{part.value}</ReactMarkdown>
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>{part.value}</ReactMarkdown>
         ) : (
           <PriceChart
             key={`chart-${i}-${part.codes.join('-')}`}
@@ -177,13 +178,14 @@ export default function Home() {
     fetchUser();
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
+  const handleSubmit = async (e?: React.FormEvent, overrideMessage?: string) => {
+    e?.preventDefault();
+    const messageText = overrideMessage || input;
+    if (!messageText.trim() || isLoading) return;
 
     const userMessage: Message = {
       role: 'user',
-      content: input,
+      content: messageText,
       timestamp: new Date().toISOString(),
     };
 
@@ -204,7 +206,7 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: input,
+          message: messageText,
           session_id: sessionId,
           pii_masking_enabled: piiMaskingEnabled,
           model: selectedModel,
@@ -223,15 +225,20 @@ export default function Home() {
       }
 
       let assistantMessage = '';
+      let accumulatedStreamContent = '';
       let messageDebug: any = null;
       const toolCallsData: any[] = [];
+      let lineBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        const chunk = decoder.decode(value, { stream: true });
+        lineBuffer += chunk;
+        const lines = lineBuffer.split('\n');
+        // Keep the last (possibly incomplete) line in the buffer
+        lineBuffer = lines.pop() || '';
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -244,6 +251,7 @@ export default function Home() {
               } else if (event.type === 'message_chunk') {
                 if (ttftMs === null) ttftMs = Math.round(performance.now() - requestStartTime);
                 setThinkingMessage(null);
+                accumulatedStreamContent += event.data.content;
                 setStreamingContent(prev => prev + event.data.content);
               } else if (event.type === 'tool_call') {
                 const callId = event.debug?.call_id || `tool_${Date.now()}`;
@@ -289,6 +297,24 @@ export default function Home() {
             }
           }
         }
+      }
+
+      // Process any remaining data in the buffer
+      if (lineBuffer.startsWith('data: ')) {
+        try {
+          const event: EventData = JSON.parse(lineBuffer.substring(6));
+          if (event.type === 'message') {
+            assistantMessage = event.data.content;
+            messageDebug = event.debug;
+          }
+        } catch (err) {
+          console.error('Error parsing final SSE line:', err);
+        }
+      }
+
+      // Safety net: if final message event was lost but we have streamed content, use it
+      if (!assistantMessage && accumulatedStreamContent) {
+        assistantMessage = accumulatedStreamContent;
       }
 
       if (assistantMessage) {
@@ -328,147 +354,9 @@ export default function Home() {
     'Ben kimim?',
   ];
 
-  const handleExampleClick = async (question: string) => {
+  const handleExampleClick = (question: string) => {
     if (isLoading) return;
-    setInput(question);
-    // Simulate form submit with the question
-    const userMessage: Message = {
-      role: 'user',
-      content: question,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
-    setIsLoading(true);
-    setCurrentToolCalls([]);
-    setThinkingMessage(null);
-    setStreamingContent('');
-
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-      const requestStartTime = performance.now();
-      let ttftMs: number | null = null;
-      const response = await fetch(`${apiUrl}/chat/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: question,
-          session_id: sessionId,
-          pii_masking_enabled: piiMaskingEnabled,
-          model: selectedModel,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      let assistantMessage = '';
-      let messageDebug: any = null;
-      const toolCallsData: any[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonStr = line.substring(6);
-            try {
-              const event: EventData = JSON.parse(jsonStr);
-
-              if (event.type === 'thinking') {
-                setThinkingMessage(event.data.message);
-              } else if (event.type === 'message_chunk') {
-                if (ttftMs === null) ttftMs = Math.round(performance.now() - requestStartTime);
-                setThinkingMessage(null);
-                setStreamingContent(prev => prev + event.data.content);
-              } else if (event.type === 'tool_call') {
-                const callId = event.debug?.call_id || `tool_${Date.now()}`;
-                setCurrentToolCalls(prev => [
-                  ...prev,
-                  {
-                    call_id: callId,
-                    tool_name: event.data.tool_name,
-                    arguments: event.data.arguments,
-                    status: event.data.status,
-                    debug: event.debug,
-                  },
-                ]);
-              } else if (event.type === 'tool_result') {
-                const resultCallId = event.debug?.call_id;
-                setCurrentToolCalls(prev =>
-                  prev.map(tc =>
-                    (resultCallId && tc.call_id === resultCallId) || (!resultCallId && tc.tool_name === event.data.tool_name)
-                      ? { ...tc, result: event.data.result, debug: event.debug, status: 'completed' }
-                      : tc
-                  )
-                );
-                toolCallsData.push({
-                  tool_name: event.data.tool_name,
-                  arguments: event.data,
-                  result: event.data.result,
-                  debug: event.debug,
-                });
-              } else if (event.type === 'message') {
-                assistantMessage = event.data.content;
-                messageDebug = event.debug;
-                setThinkingMessage(null);
-                setStreamingContent('');
-              } else if (event.type === 'error') {
-                console.error('Error from agent:', event.data.error);
-                assistantMessage = event.data.message || 'Bir hata oluştu.';
-                messageDebug = event.debug;
-              } else if (event.type === 'done') {
-                break;
-              }
-            } catch (err) {
-              console.error('Error parsing SSE data:', err);
-            }
-          }
-        }
-      }
-
-      if (assistantMessage) {
-        if (messageDebug && ttftMs !== null) {
-          messageDebug = { ...messageDebug, ttft_ms: ttftMs };
-        }
-        const newAssistantMessage: Message = {
-          role: 'assistant',
-          content: assistantMessage,
-          timestamp: new Date().toISOString(),
-          debug: messageDebug,
-          toolCalls: toolCallsData.length > 0 ? toolCallsData : undefined,
-        };
-        setMessages(prev => [...prev, newAssistantMessage]);
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      const errorMessage: Message = {
-        role: 'assistant',
-        content: 'Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.',
-        timestamp: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-      setCurrentToolCalls([]);
-      setThinkingMessage(null);
-      setStreamingContent('');
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
+    handleSubmit(undefined, question);
   };
 
   return (
@@ -989,7 +877,7 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
           )}
         </div>
 
-        <div className={`text-xs mt-1 ${isUser ? 'text-right' : 'text-left'} ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>
+        <div className={`text-xs mt-1 mb-3 ${isUser ? 'text-right' : 'text-left'} ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>
           {new Date(message.timestamp).toLocaleTimeString('tr-TR')}
         </div>
       </div>
