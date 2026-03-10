@@ -8,6 +8,7 @@ from pydantic import Field
 from agent_framework.azure import AzureOpenAIChatClient
 from agent import ReducingChatMessageStore
 from tools.pii import pii_unmask_args
+from i18n import Language, get_customer_info_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -44,29 +45,8 @@ def get_customer_info(
 # Agent factory
 # ────────────────────────────────────────────────────────────
 
-CUSTOMER_INFO_SYSTEM_PROMPT = """You are a specialized customer information assistant for Garanti Bank.
-Your expertise is in customer account details, portfolio holdings, and transaction history.
 
-Key Responsibilities:
-- Provide customer personal information and account details
-- Show portfolio holdings and their current values
-- Display transaction history with filtering options (by fund, type, date)
-- Summarize buy/sell/dividend activity
-- Always respond in Turkish
-
-Guidelines:
-1. Always use the provided tools to fetch accurate customer data
-2. Present information clearly with organized tables or lists
-3. When showing transactions, include relevant summary statistics
-4. Protect customer privacy - only show information for the authenticated customer
-5. Use markdown formatting for better readability
-6. Be helpful and professional
-7. If asked about fund details, performance, comparisons, or currency/FX questions, suggest that those topics can be handled by the relevant specialist
-
-Remember: You must respond in Turkish to all user queries."""
-
-
-def create_customer_info_agent(deployment: str | None = None):
+def create_customer_info_agent(deployment: str | None = None, language: Language = "tr"):
     """Create and return a ChatAgent configured for customer info queries."""
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     api_key = os.getenv("AZURE_OPENAI_KEY")
@@ -83,7 +63,7 @@ def create_customer_info_agent(deployment: str | None = None):
     agent = chat_client.as_agent(
         name="customer_info_agent",
         description="Müşteri bilgileri, portföy durumu ve işlem geçmişi konusunda uzmanlaşmış asistan. Müşteri hesap bilgileri ve işlem sorguları için bu agent'a yönlendirme yapın.",
-        instructions=CUSTOMER_INFO_SYSTEM_PROMPT,
+        instructions=get_customer_info_system_prompt(language),
         tools=[
             get_customer_transactions,
             get_customer_info,

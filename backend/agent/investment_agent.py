@@ -20,6 +20,10 @@ from tools.span_collector import drain_spans, spans_to_timeline, ToolStartQueue
 from agent import ReducingChatMessageStore
 from agent.currency_agent import create_currency_agent
 from agent.customer_info_agent import create_customer_info_agent
+from i18n import (
+    Language, get_tool_message, get_default_tool_message, get_message,
+    get_investment_system_prompt,
+)
 
 # Configure logging (use INFO level in production for better performance)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -57,6 +61,13 @@ def compare_funds(
     """Compare multiple investment funds based on specific metrics like returns, risk levels, or fees."""
     from tools.fund_knowledge import compare_funds as _compare_funds
     result = _compare_funds(fund_codes, metric)
+    return json.dumps(result, ensure_ascii=False)
+
+
+def get_recommended_funds() -> str:
+    """Get the list of recommended (önerilen) investment funds. Use this when the user asks for recommended funds, suggested funds, or 'önerilen fonlar'."""
+    from tools.fund_knowledge import get_recommended_funds as _get_recommended_funds
+    result = _get_recommended_funds()
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -109,56 +120,27 @@ class InvestmentAgent:
     
     def __init__(self):
         """Initialize the agent with Microsoft Agent Framework and Azure OpenAI."""
-        # System prompt for the investment (triage) agent
-        self.system_prompt = """You are an expert Turkish investment advisor assistant for Garanti Bank. Your role is to help customers with their investment fund questions.
-
-Key Responsibilities:
-- Answer questions about investment funds using relevant tools in Turkish
-- Provide information about fund performance, risks, and characteristics
-- Compare funds and make recommendations based on customer needs
-- When the user asks about their personal info, portfolio, account details, or transaction history, hand off to the customer_info_agent
-- When the user asks about exchange rates, currency conversions, gold/silver prices, or any FX-related topic, hand off to the currency_agent
-- Always respond in Turkish, even though this prompt is in English
-- Use markdown formatting for better readability when listing funds, transactions, or comparisons
-- Make numbers and important details stand out using bold or bullet points
-
-Guidelines:
-1. Always use the provided tools to fetch accurate, up-to-date information about funds. Do NOT make up details that can be retrieved via tools.
-2. Respond in clear, professional Turkish
-3. Explain investment concepts in simple terms
-7. If you need to use multiple tools, call them sequentially to gather complete information
-8. For customer info, portfolio, or transaction history questions (müşteri bilgileri, portföy, hesap, işlem geçmişi, ben kimim, etc.), always hand off to customer_info_agent
-9. For currency/FX questions (dolar, euro, sterlin, kur, döviz, altın fiyatı, çevir, etc.), always hand off to currency_agent
-10. When discussing a fund's price history or performance over a date range, or a currency's rate history, include a chart in your response using this special tag: <graph code="CODE" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
-   - Fund example: <graph code="GOL" start="01.01.2026" end="28.02.2026"></graph>
-   - Currency pair example: Use 6-letter pair codes ending with TRY: <graph code="USDTRY" start="01.01.2026" end="28.02.2026"></graph>
-   - Mixed comparison (fund vs currency, max 3 codes): <graph code="GOL,USDTRY,EURTRY" start="01.01.2026" end="28.02.2026"></graph>
-   - The frontend will automatically render an interactive price chart from this tag
-   - For multi-series comparisons, the chart normalizes prices to % change for fair comparison
-   - Use the actual fund/currency codes and the relevant date range from the conversation or tool results
-   - Place the graph tag after your textual explanation
-
-Remember: You must respond in Turkish to all user queries.
-Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current date for temporal awareness
-        
         # Azure OpenAI base config
         self.azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.api_key = os.getenv("AZURE_OPENAI_KEY")
         self.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
         self.default_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.1-chat")
         
-        # Cache: deployment_name -> (investment_agent, currency_agent, customer_info_agent)
-        self._agents_cache: dict[str, tuple] = {}
+        # Cache: (deployment_name, language) -> (investment_agent, currency_agent, customer_info_agent)
+        self._agents_cache: dict[tuple[str, str], tuple] = {}
         
         # Build default agents eagerly so the first request is fast
-        self._get_or_create_agents(self.default_deployment)
+        self._get_or_create_agents(self.default_deployment, "tr")
         
         self.deployment = self.default_deployment
     
-    def _get_or_create_agents(self, deployment: str) -> tuple:
-        """Return (investment_agent, currency_agent, customer_info_agent) for *deployment*, creating & caching if needed."""
-        if deployment in self._agents_cache:
-            return self._agents_cache[deployment]
+    def _get_or_create_agents(self, deployment: str, language: Language = "tr") -> tuple:
+        """Return (investment_agent, currency_agent, customer_info_agent) for *deployment* and *language*, creating & caching if needed."""
+        cache_key = (deployment, language)
+        if cache_key in self._agents_cache:
+            return self._agents_cache[cache_key]
+        
+        system_prompt = get_investment_system_prompt(language, datetime.now().strftime('%d.%m.%Y'))
         
         chat_client = AzureOpenAIChatClient(
             api_key=self.api_key,
@@ -170,11 +152,12 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         investment_agent = chat_client.as_agent(
             name="investment_agent",
             description="Yatırım fonları ve fon performansı konusunda uzmanlaşmış asistan. Genel yatırım soruları için bu agent başlangıç noktasıdır.",
-            instructions=self.system_prompt,
+            instructions=system_prompt,
             tools=[
                 search_funds,
                 get_fund_details,
                 compare_funds,
+                get_recommended_funds,
                 get_fund_price_history,
                 fund_returns_by_date,
             ],
@@ -182,14 +165,14 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
             chat_message_store_factory=ReducingChatMessageStore,
         )
         
-        currency_agent = create_currency_agent(deployment=deployment)
-        customer_info_agent = create_customer_info_agent(deployment=deployment)
+        currency_agent = create_currency_agent(deployment=deployment, language=language)
+        customer_info_agent = create_customer_info_agent(deployment=deployment, language=language)
         
-        self._agents_cache[deployment] = (investment_agent, currency_agent, customer_info_agent)
-        logger.info(f"🔧 Created agents for deployment: {deployment}")
+        self._agents_cache[cache_key] = (investment_agent, currency_agent, customer_info_agent)
+        logger.info(f"🔧 Created agents for deployment: {deployment}, language: {language}")
         return investment_agent, currency_agent, customer_info_agent
     
-    def create_new_workflow(self, model: str | None = None) -> Workflow:
+    def create_new_workflow(self, model: str | None = None, language: Language = "tr") -> Workflow:
         """Create a new Workflow instance for a session using HandoffBuilder.
         
         Args:
@@ -201,7 +184,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         response it emits a RequestInfoEvent and waits for real user input.
         """
         deployment = model or self.default_deployment
-        investment_agent, currency_agent, customer_info_agent = self._get_or_create_agents(deployment)
+        investment_agent, currency_agent, customer_info_agent = self._get_or_create_agents(deployment, language)
         
         workflow = (
             HandoffBuilder(
@@ -232,6 +215,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
         is_followup: bool = False,
         pending_request_id: str | None = None,
         model: str | None = None,
+        language: Language = "tr",
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream agent response with tool calls and debug information using HandoffBuilder workflow.
@@ -249,18 +233,16 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
             "debug": {...}
         }
         """
-        # Tool name to Turkish message mapping
+        # Tool name to user-friendly message mapping (language-aware)
         tool_messages = {
-            "get_customer_info": "Müşteri bilgilerinize bakıyorum...",
-            "get_customer_transactions": "İşlem geçmişinizi inceliyorum...",
-            "search_funds": "Fonları araştırıyorum...",
-            "get_fund_details": "Fon detaylarını araştırıyorum...",
-            "compare_funds": "Fonları karşılaştırıyorum...",
-            "get_fund_price_history": "Fon fiyat geçmişine bakıyorum...",
-            "fund_returns_by_date": "Fon getiri bilgilerini çekiyorum...",
-            "get_exchange_rate": "Döviz kurunu kontrol ediyorum...",
-            "list_exchange_rates": "Döviz kurlarını listeliyorum...",
-            "convert_currency": "Döviz çevirisi yapıyorum...",
+            tool: get_tool_message(language, tool)
+            for tool in [
+                "get_customer_info", "get_customer_transactions",
+                "search_funds", "get_fund_details", "compare_funds",
+                "get_recommended_funds", "get_fund_price_history",
+                "fund_returns_by_date", "get_exchange_rate",
+                "list_exchange_rates", "convert_currency",
+            ]
         }
         
         try:
@@ -275,7 +257,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
             # Yield initial thinking event
             yield {
                 "type": "thinking",
-                "data": {"message": "Sorunuzu analiz ediyorum..."},
+                "data": {"message": get_message(language, "analyzing")},
                 "debug": {
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -327,7 +309,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
                   while (early_tool := tool_queue.try_get()) is not None:
                       if early_tool not in otel_notified_tools and not early_tool.startswith('handoff_to_'):
                           otel_notified_tools.add(early_tool)
-                          friendly = tool_messages.get(early_tool, "Bilgileri topluyorum...")
+                          friendly = tool_messages.get(early_tool, get_default_tool_message(language))
                           yield {
                               "type": "thinking",
                               "data": {"message": friendly},
@@ -417,9 +399,8 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
                                     
                                       logger.info(f"🔧 Tool call (stream event): {name} (agent: {current_agent_id})")
                                     
-                                      # Only yield thinking if OTel didn't already notify for this tool
                                       if name not in otel_notified_tools:
-                                          friendly_message = tool_messages.get(name, "Bilgileri topluyorum...")
+                                          friendly_message = tool_messages.get(name, get_default_tool_message(language))
                                           yield {
                                               "type": "thinking",
                                               "data": {"message": friendly_message},
@@ -527,7 +508,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
                                         
                       yield {
                           "type": "thinking",
-                          "data": {"message": f"İlgili kaynaklara ulaşıyorum ..."},
+                          "data": {"message": get_message(language, "handoff")},
                           "debug": {
                               "source": wf_event.source,
                               "target": wf_event.target,
@@ -608,7 +589,7 @@ Today's date is"""+ f" {datetime.now().strftime('%d.%m.%Y')}."  # Inject current
                 "type": "error",
                 "data": {
                     "error": str(e),
-                    "message": "Bir hata oluştu. Lütfen tekrar deneyin."
+                    "message": get_message(language, "error")
                 },
                 "debug": {
                     "error_type": type(e).__name__,

@@ -7,6 +7,7 @@ from pydantic import Field
 from agent_framework.azure import AzureOpenAIChatClient
 from agent import ReducingChatMessageStore
 from tools.pii import pii_unmask_args
+from i18n import Language, get_currency_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -53,34 +54,8 @@ def convert_currency(
 # Agent factory
 # ────────────────────────────────────────────────────────────
 
-CURRENCY_SYSTEM_PROMPT = """You are a specialized currency and foreign exchange assistant for Garanti Bank.
-Your expertise is in exchange rates, currency conversions, gold/silver prices, and FX market information.
 
-Key Responsibilities:
-- Provide current exchange rates for major currencies (USD, EUR, GBP, etc.)
-- Convert amounts between currencies
-- Show currency price history and trends
-- Explain gold and silver prices
-- Always respond in Turkish
-
-Guidelines:
-1. Always use the provided tools to fetch accurate exchange rate data
-2. Present rates clearly with buy/sell spreads
-3. When showing multiple currencies, use organized tables or lists
-4. Mention that rates are indicative ("gösterge niteliğinde")
-5. For gold prices, clarify whether it's gram or ounce
-6. Be helpful and professional
-7. If asked about investment funds or portfolio questions, suggest that those topics can be handled by the investment specialist
-8. When discussing currency rate history or trends over a date range, include a chart using this tag: <graph code="XXXXTRY" start="DD.MM.YYYY" end="DD.MM.YYYY"></graph>
-   - Use 6-letter pair code ending with TRY: e.g. <graph code="USDTRY" start="01.01.2026" end="28.02.2026"></graph>
-   - You can compare currencies: <graph code="USDTRY,EURTRY" start="01.01.2026" end="28.02.2026"></graph>
-   - The frontend renders an interactive chart from this tag automatically
-   - Place the tag after your textual explanation
-
-Remember: You must respond in Turkish to all user queries."""
-
-
-def create_currency_agent(deployment: str | None = None):
+def create_currency_agent(deployment: str | None = None, language: Language = "tr"):
     """Create and return a ChatAgent configured for currency/FX queries."""
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     api_key = os.getenv("AZURE_OPENAI_KEY")
@@ -97,7 +72,7 @@ def create_currency_agent(deployment: str | None = None):
     agent = chat_client.as_agent(
         name="currency_agent",
         description="Döviz kurları, altın/gümüş fiyatları ve döviz çevirme işlemleri konusunda uzmanlaşmış asistan. Döviz soruları için bu agent'a yönlendirme yapın.",
-        instructions=CURRENCY_SYSTEM_PROMPT,
+        instructions=get_currency_system_prompt(language),
         tools=[
             get_exchange_rate,
             list_exchange_rates,

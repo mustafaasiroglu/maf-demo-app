@@ -290,6 +290,73 @@ def get_fund_details(fund_code: str) -> Dict[str, Any]:
         }
 
 
+def get_recommended_funds() -> Dict[str, Any]:
+    """
+    Get all recommended funds from Azure AI Search (is_recommended == true).
+
+    Returns:
+        Dictionary containing a list of recommended funds with basic details.
+    """
+    start_time = datetime.now()
+
+    try:
+        results = _query_search_index(
+            "*",
+            filters="is_recommended eq true",
+            top=50,
+            fields=SEARCH_RESULT_FIELDS,
+        )
+
+        for doc in results:
+            doc.pop("@search.score", None)
+
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+
+        if not results:
+            return {
+                "type": "tool_result",
+                "data": {
+                    "found": False,
+                    "message": "Önerilen fon bulunamadı.",
+                },
+                "debug": {
+                    "tool_name": "get_recommended_funds",
+                    "execution_time_ms": execution_time,
+                    "result": "not_found",
+                },
+            }
+
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": True,
+                "funds": results,
+                "total_results": len(results),
+            },
+            "debug": {
+                "tool_name": "get_recommended_funds",
+                "execution_time_ms": execution_time,
+                "result": "success",
+            },
+        }
+
+    except Exception as exc:
+        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+        return {
+            "type": "tool_result",
+            "data": {
+                "found": False,
+                "message": f"Önerilen fonlar alınırken hata oluştu: {str(exc)}",
+            },
+            "debug": {
+                "tool_name": "get_recommended_funds",
+                "execution_time_ms": execution_time,
+                "result": "error",
+                "error": str(exc),
+            },
+        }
+
+
 def compare_funds(fund_codes: List[str], metric: str = "returns") -> Dict[str, Any]:
     """
     Compare multiple funds based on a specific metric.

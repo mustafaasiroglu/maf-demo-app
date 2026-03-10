@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PriceChart from './PriceChart';
+import { Language, getTranslations } from './i18n';
 
 function ColoredJson({ data, isDarkMode }: { data: any; isDarkMode: boolean }) {
   const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -128,9 +129,13 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState('gpt-5.1-chat');
   const [piiMaskingEnabled, setPiiMaskingEnabled] = useState(false);
+  const [language, setLanguage] = useState<Language>('tr');
+  const t = getTranslations(language);
   const [sessionId] = useState<string>(() => generateSessionId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   const llmModels = ['gpt-5.1-chat', 'gpt-5.1', 'gpt-5.2-mini'];
 
@@ -156,6 +161,10 @@ export default function Home() {
     if (savedModel && llmModels.includes(savedModel)) {
       setSelectedModel(savedModel);
     }
+    const savedLang = localStorage.getItem('language') as Language | null;
+    if (savedLang && (savedLang === 'tr' || savedLang === 'en')) {
+      setLanguage(savedLang);
+    }
   }, []);
 
   // Focus input on page load
@@ -177,6 +186,61 @@ export default function Home() {
     };
     fetchUser();
   }, []);
+
+  const handleMicClick = () => {
+    if (isRecording) {
+      // Stop recording and send
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech recognition is not supported in this browser.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = language === 'tr' ? 'tr-TR' : 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognitionRef.current = recognition;
+
+    let finalTranscript = '';
+
+    recognition.onresult = (event: any) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      setInput(finalTranscript + interim);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+      // Auto-send if there's content
+      if (finalTranscript.trim()) {
+        setTimeout(() => {
+          handleSubmit(undefined, finalTranscript.trim());
+        }, 100);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error('Speech recognition error:', event.error);
+      setIsRecording(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
+    setIsRecording(true);
+  };
 
   const handleSubmit = async (e?: React.FormEvent, overrideMessage?: string) => {
     e?.preventDefault();
@@ -210,6 +274,7 @@ export default function Home() {
           session_id: sessionId,
           pii_masking_enabled: piiMaskingEnabled,
           model: selectedModel,
+          language: language,
         }),
       });
 
@@ -287,7 +352,7 @@ export default function Home() {
                 setStreamingContent('');
               } else if (event.type === 'error') {
                 console.error('Error from agent:', event.data.error);
-                assistantMessage = event.data.message || 'Bir hata oluştu.';
+                assistantMessage = event.data.message || t.errorGeneric;
                 messageDebug = event.debug;
               } else if (event.type === 'done') {
                 break;
@@ -334,7 +399,7 @@ export default function Home() {
       console.error('Error:', error);
       const errorMessage: Message = {
         role: 'assistant',
-        content: 'Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.',
+        content: t.errorWithRetry,
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, errorMessage]);
@@ -347,12 +412,7 @@ export default function Home() {
     }
   };
 
-  const exampleQuestions = [
-    'GTA fonu nedir? Dağılımı nasıl?',
-    'Getirisi en yüksek fonlar hangileri?',
-    'GOL, GTZ fonlarının son 1 ay getirisi kıyaslar mısın?',
-    'Ben kimim?',
-  ];
+  const exampleQuestions = t.exampleQuestions;
 
   const handleExampleClick = (question: string) => {
     if (isLoading) return;
@@ -368,8 +428,8 @@ export default function Home() {
             className="cursor-pointer hover:opacity-80 transition-opacity"
             onClick={() => window.location.reload()}
           >
-            <h1 className="text-2xl font-bold">Investing Agent</h1>
-            <p className="text-sm text-gray-100">Garanti Yatırım Asistanı</p>
+            <h1 className="text-2xl font-bold">{t.headerTitle}</h1>
+            <p className="text-sm text-gray-100">{t.headerSubtitle}</p>
           </div>
           <div className="flex items-center space-x-4">
             {/* Settings Button */}
@@ -404,7 +464,7 @@ export default function Home() {
         <div className="p-6 h-full flex flex-col">
           {/* Panel Header */}
           <div className="flex justify-between items-center mb-6">
-            <h2 className={`text-xl font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>Test Settings</h2>
+            <h2 className={`text-xl font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>{t.settingsTitle}</h2>
             <button
               onClick={() => setIsSettingsOpen(false)}
               className={`p-2 rounded-lg hover:bg-gray-200 transition-colors ${isDarkMode ? 'hover:bg-dark-card text-dark-text' : ''}`}
@@ -418,7 +478,7 @@ export default function Home() {
           {/* PII Masking Toggle */}
           <div className="mb-6">
             <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
-              PII Masking
+              {t.piiMaskingLabel}
             </label>
             <button
               onClick={() => { const next = !piiMaskingEnabled; setPiiMaskingEnabled(next); localStorage.setItem('piiMaskingEnabled', String(next)); }}
@@ -436,7 +496,7 @@ export default function Home() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
-                <span>Mask PII Data</span>
+                <span>{t.piiMaskingToggle}</span>
               </div>
               <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${
                 piiMaskingEnabled
@@ -452,7 +512,7 @@ export default function Home() {
           {/* LLM Model Selection */}
           <div className="mb-6">
             <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
-              LLM Model
+              {t.llmModelLabel}
             </label>
             <div className="space-y-2">
               {llmModels.map((model) => (
@@ -478,7 +538,7 @@ export default function Home() {
           {/* Theme Selection */}
           <div className="mb-6">
             <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
-              Theme
+              {t.themeLabel}
             </label>
             <div className="flex space-x-2">
               <button
@@ -495,7 +555,7 @@ export default function Home() {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z" />
                 </svg>
-                <span>Light</span>
+                <span>{t.themeLight}</span>
               </button>
               <button
                 onClick={() => {
@@ -511,7 +571,52 @@ export default function Home() {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
                 </svg>
-                <span>Dark</span>
+                <span>{t.themeDark}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Language Selection */}
+          <div className="mb-6">
+            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+              {t.languageLabel}
+            </label>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => {
+                  setLanguage('tr');
+                  localStorage.setItem('language', 'tr');
+                }}
+                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                  language === 'tr'
+                    ? isDarkMode
+                      ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                      : 'border-primary bg-primary/10 text-primary font-semibold'
+                    : isDarkMode
+                      ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                      : 'border-gray-200 hover:border-primary/50'
+                }`}
+              >
+                <span>🇹🇷</span>
+                <span>Türkçe</span>
+              </button>
+              <button
+                onClick={() => {
+                  setLanguage('en');
+                  localStorage.setItem('language', 'en');
+                }}
+                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                  language === 'en'
+                    ? isDarkMode
+                      ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                      : 'border-primary bg-primary/10 text-primary font-semibold'
+                    : isDarkMode
+                      ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                      : 'border-gray-200 hover:border-primary/50'
+                }`}
+              >
+                <span>🇬🇧</span>
+                <span>English</span>
               </button>
             </div>
           </div>
@@ -526,10 +631,10 @@ export default function Home() {
             <div className="text-center py-12">
               <div className="text-primary text-6xl mb-4">🍀</div>
               <h2 className={`text-2xl font-semibold mb-4 ${isDarkMode ? 'text-primary-lighter' : 'text-primary'}`}>
-                Hoş Geldiniz!
+                {t.welcomeTitle}
               </h2>
               <p className={`mb-8 ${isDarkMode ? 'text-dark-muted' : 'text-gray-600'}`}>
-                Size nasıl yardımcı olabilirim? İşte bazı örnek sorular:
+                {t.welcomeSubtitle}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
                 {exampleQuestions.map((question, index) => (
@@ -546,7 +651,7 @@ export default function Home() {
           )}
 
           {messages.map((message, index) => (
-            <MessageBubble key={index} message={message} isDarkMode={isDarkMode} />
+            <MessageBubble key={index} message={message} isDarkMode={isDarkMode} t={t} language={language} />
           ))}
 
           {/* Thinking/Loading State or Streaming Content */}
@@ -583,10 +688,10 @@ export default function Home() {
                         <div className="flex items-center space-x-2">
                           <span className={`font-semibold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>🔧 {tc.tool_name}</span>
                           {tc.status === 'executing' && (
-                            <span className={isDarkMode ? 'text-yellow-400' : 'text-yellow-600'}>⏳ Çalışıyor...</span>
+                            <span className={isDarkMode ? 'text-yellow-400' : 'text-yellow-600'}>⏳ {t.toolRunning}</span>
                           )}
                           {tc.status === 'completed' && (
-                            <span className={isDarkMode ? 'text-green-400' : 'text-green-600'}>✓ Tamamlandı</span>
+                            <span className={isDarkMode ? 'text-green-400' : 'text-green-600'}>✓ {t.toolCompleted}</span>
                           )}
                         </div>
                       </div>
@@ -605,15 +710,43 @@ export default function Home() {
       <div id="print-input" className={`sticky bottom-0 border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>
         <div className="container mx-auto max-w-4xl">
           <form onSubmit={handleSubmit} className="flex space-x-3">
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Size nasıl yardımcı olabilirim?"
-              disabled={isLoading}
-              className={`flex-1 p-3 border-2 rounded-lg focus:outline-none focus:border-primary disabled:cursor-not-allowed ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text placeholder-dark-muted disabled:bg-dark-card' : 'border-primary/20 disabled:bg-gray-100'}`}
-            />
+            <div className="flex-1 relative">
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t.inputPlaceholder}
+                disabled={isLoading}
+                className={`w-full p-3 pr-12 border-2 rounded-lg focus:outline-none focus:border-primary disabled:cursor-not-allowed ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text placeholder-dark-muted disabled:bg-dark-card' : 'border-primary/20 disabled:bg-gray-100'}`}
+              />
+              <button
+                type="button"
+                onClick={handleMicClick}
+                disabled={isLoading}
+                className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-colors duration-200 disabled:cursor-not-allowed ${
+                  isRecording
+                    ? 'bg-red-500 text-white animate-pulse'
+                    : isDarkMode
+                      ? 'text-dark-muted hover:text-dark-text hover:bg-dark-card'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+                title={isRecording ? 'Stop & Send' : 'Voice input'}
+              >
+                {isRecording ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                    <line x1="12" y1="19" x2="12" y2="23" />
+                    <line x1="8" y1="23" x2="16" y2="23" />
+                  </svg>
+                )}
+              </button>
+            </div>
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
@@ -647,10 +780,39 @@ export default function Home() {
   );
 }
 
-function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: boolean }) {
+function MessageBubble({ message, isDarkMode, t, language }: { message: Message; isDarkMode: boolean; t: import('./i18n').Translations; language: Language }) {
   const [showDebug, setShowDebug] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const isUser = message.role === 'user';
+
+  const handleReadAloud = () => {
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    // Strip markdown/HTML tags for cleaner speech
+    const plainText = message.content
+      .replace(/<graph[^>]*\/?>(<\/graph>)?/g, '')
+      .replace(/[#*_`~>\[\]()!|]/g, '')
+      .replace(/\n{2,}/g, '. ')
+      .replace(/\n/g, '. ')
+      .trim();
+
+    if (!plainText) return;
+
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    utterance.lang = language === 'tr' ? 'tr-TR' : 'en-US';
+    utterance.rate = 1;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(true);
+  };
 
   return (
     <div data-role={message.role} className={`flex ${isUser ? 'justify-end' : 'justify-start'} items-start space-x-3`}>
@@ -678,38 +840,48 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                 <button
                   onClick={() => { navigator.clipboard.writeText(message.content); }}
                   className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110"
-                  title="Kopyala"
+                  title={t.actionCopy}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                   </svg>
                 </button>
-                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Beğen">
+                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title={t.actionLike}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
                     <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
                   </svg>
                 </button>
-                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Beğenme">
+                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title={t.actionDislike}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/>
                     <path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>
                   </svg>
                 </button>
-                <button className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110 cursor-default" title="Sesli oku">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-                  </svg>
+                <button
+                  onClick={handleReadAloud}
+                  className={`p-1 rounded transition-all duration-150 hover:scale-110 ${isSpeaking ? 'opacity-100 text-primary' : 'opacity-50 hover:opacity-80'}`}
+                  title={t.actionReadAloud}
+                >
+                  {isSpeaking ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                  )}
                 </button>
               </div>
               {(message.debug || message.toolCalls) && (
                 <button
                   onClick={() => setShowDebug(!showDebug)}
                   className="p-1 rounded transition-all duration-150 opacity-50 hover:opacity-80 hover:scale-110"
-                  title={showDebug ? 'Detayları Gizle' : 'Detayları Göster'}
+                  title={showDebug ? t.actionHideDetails : t.actionShowDetails}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="4 17 10 11 4 5"/>
@@ -723,7 +895,7 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
               <div className={`mt-3 p-3 rounded text-xs ${isDarkMode ? 'bg-dark-bg/50' : 'bg-gray-50'}`}>
                   {message.debug && (
                     <div>
-                      <div className="font-semibold mb-3">Response Timeline:</div>
+                      <div className="font-semibold mb-3">{t.debugResponseTimeline}</div>
                       
                       {/* Unified Timeline Table */}
                       {message.debug.timeline_events && message.debug.timeline_events.length > 0 && (() => {
@@ -737,10 +909,10 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                             <thead>
                               <tr className={isDarkMode ? 'bg-dark-card' : 'bg-gray-100'}>
                                 <th className="text-left px-2 py-1 w-3">#</th>
-                                <th className="text-left px-2 py-1" style={{ width: '20%' }}>Agent</th>
-                                <th className="text-left px-2 py-1" style={{ width: '30%' }}>Step</th>
-                                <th className="text-left px-2 py-1" style={{ width: '30%' }}>Timeline</th>
-                                <th className="text-right px-2 py-1 w-10">Duration</th>
+                                <th className="text-left px-2 py-1" style={{ width: '20%' }}>{t.debugAgent}</th>
+                                <th className="text-left px-2 py-1" style={{ width: '30%' }}>{t.debugStep}</th>
+                                <th className="text-left px-2 py-1" style={{ width: '30%' }}>{t.debugTimeline}</th>
+                                <th className="text-right px-2 py-1 w-10">{t.debugDuration}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -811,12 +983,12 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                           <div className={`px-2 py-2 border-t ${isDarkMode ? 'bg-dark-card border-dark-card' : 'bg-gray-100 border-gray-200'}`}>
                             
                             <div className="flex justify-between">
-                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-900'}`}>Total Request Duration:</span>
+                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-900'}`}>{t.debugTotalRequestDuration}</span>
                               <span className={`font-mono font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-900'}`}>{message.debug.total_request_time_ms?.toFixed(0)} ms</span>
                             </div>
                             <hr className={`my-2 border ${isDarkMode ? 'border-dark-border' : 'border-gray-300'}`} />
                             <div className="flex justify-between">
-                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-primary-dark'}`}>Time to First Token (Frontend):</span>
+                              <span className={`font-bold ${isDarkMode ? 'text-dark-text' : 'text-primary-dark'}`}>{t.debugTTFT}</span>
                               <span className={`font-bold font-mono ${isDarkMode ? 'text-dark-text' : 'text-primary-dark'}`}>
                                 {message.debug.ttft_ms != null ? `${message.debug.ttft_ms} ms` : '-'}
                               </span>
@@ -837,11 +1009,11 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
                               onClick={() => setSelectedEvent(null)}
                               className={`absolute top-2 right-3 text-lg hover:opacity-70 ${isDarkMode ? 'text-dark-muted' : 'text-gray-400'}`}
                             >✕</button>
-                            <h3 className="font-semibold text-sm mb-4">{selectedEvent.icon ?? '📋'} {selectedEvent.label} – Request Details</h3>
+                            <h3 className="font-semibold text-sm mb-4">{selectedEvent.icon ?? '📋'} {selectedEvent.label} – {t.debugRequestDetails}</h3>
 
                             {/* Request Input */}
                             <div className="mb-4">
-                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>Request Input</div>
+                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>{t.debugRequestInput}</div>
                               <pre className={`text-xs p-3 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all ${isDarkMode ? 'bg-dark-bg' : 'bg-gray-50 border border-gray-200'}`}>
                                 {selectedEvent.request_input ? <ColoredJson data={selectedEvent.request_input} isDarkMode={isDarkMode} /> : 'N/A'}
                               </pre>
@@ -849,7 +1021,7 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
 
                             {/* Request Output */}
                             <div>
-                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>Request Output</div>
+                              <div className={`text-xs font-semibold mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>{t.debugRequestOutput}</div>
                               <pre className={`text-xs p-3 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all ${isDarkMode ? 'bg-dark-bg' : 'bg-gray-50 border border-gray-200'}`}>
                                 {selectedEvent.request_output ? <ColoredJson data={selectedEvent.request_output} isDarkMode={isDarkMode} /> : 'N/A'}
                               </pre>
@@ -857,15 +1029,15 @@ function MessageBubble({ message, isDarkMode }: { message: Message; isDarkMode: 
 
                             {/* Duration */}
                             <div className={`mt-3 pt-3 border-t text-xs ${isDarkMode ? 'border-dark-card text-dark-muted' : 'border-gray-200 text-gray-500'}`}>
-                              Duration: <span className="font-mono font-semibold">{selectedEvent.duration_ms?.toFixed(0) ?? '–'} ms</span>
+                              {t.debugDuration}: <span className="font-mono font-semibold">{selectedEvent.duration_ms?.toFixed(0) ?? '–'} ms</span>
                               {selectedEvent.ttft_ms != null && (
                                 <span className="ml-3">TTFT: <span className="font-mono font-semibold">{Math.round(selectedEvent.ttft_ms)} ms</span></span>
                               )}
                               <br />
                               <span className={isDarkMode ? 'text-dark-muted' : 'text-gray-400'}>
-                                Start: <span className="font-mono">{selectedEvent.timestamp_start?.toFixed(2) ?? '–'} ms</span>
+                                {t.debugStart}: <span className="font-mono">{selectedEvent.timestamp_start?.toFixed(2) ?? '–'} ms</span>
                                 <span className="mx-2">→</span>
-                                End: <span className="font-mono">{selectedEvent.timestamp_end?.toFixed(2) ?? '–'} ms</span>
+                                {t.debugEnd}: <span className="font-mono">{selectedEvent.timestamp_end?.toFixed(2) ?? '–'} ms</span>
                               </span>
                             </div>
                           </div>

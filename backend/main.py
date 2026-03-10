@@ -50,6 +50,7 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     pii_masking_enabled: bool = False
     model: str = ""
+    language: str = "tr"
 
 class ChatResponse(BaseModel):
     response: str
@@ -251,6 +252,7 @@ async def chat_stream(request: ChatRequest):
     user_message = request.message
     pii_masking_enabled = request.pii_masking_enabled
     requested_model = request.model or None  # None means use default
+    language = request.language if request.language in ("tr", "en") else "tr"
     
     # Store PII masking preference for the session
     session_pii_enabled[session_id] = pii_masking_enabled
@@ -264,21 +266,24 @@ async def chat_stream(request: ChatRequest):
     # workflow recreation (which would wipe conversation history).
     effective_model = requested_model or agent.deployment
     if session_id not in sessions:
-        _log.info(f"📌 New session {session_id}, creating workflow (model={effective_model})")
+        _log.info(f"📌 New session {session_id}, creating workflow (model={effective_model}, lang={language})")
         sessions[session_id] = {
-            "workflow": agent.create_new_workflow(model=effective_model),
+            "workflow": agent.create_new_workflow(model=effective_model, language=language),
             "pending_request_id": None,
             "model": effective_model,
+            "language": language,
         }
     else:
         prev_model = sessions[session_id].get("model") or agent.deployment
-        if effective_model != prev_model:
-            # Model truly changed — create a fresh workflow with the new model
-            _log.info(f"🔄 Model changed ({prev_model} → {effective_model}), recreating workflow for session {session_id}")
+        prev_lang = sessions[session_id].get("language", "tr")
+        if effective_model != prev_model or language != prev_lang:
+            # Model or language changed — create a fresh workflow
+            _log.info(f"🔄 Config changed (model={prev_model}→{effective_model}, lang={prev_lang}→{language}), recreating workflow for session {session_id}")
             sessions[session_id] = {
-                "workflow": agent.create_new_workflow(model=effective_model),
+                "workflow": agent.create_new_workflow(model=effective_model, language=language),
                 "pending_request_id": None,
                 "model": effective_model,
+                "language": language,
             }
         else:
             pending_request_id = sessions[session_id].get("pending_request_id")
@@ -342,7 +347,7 @@ async def chat_stream(request: ChatRequest):
             # Stream agent response (send masked message to LLM)
             # Set PII replacements so tool functions can unmask their parameters
             set_pii_replacements(pii_replacements)
-            async for event in agent.stream_response(message_for_llm, workflow, is_followup, pending_request_id, model=requested_model):
+            async for event in agent.stream_response(message_for_llm, workflow, is_followup, pending_request_id, model=requested_model, language=language):
                 # Unmask PII in response content before sending to client
                 if pii_masking_enabled and pii_replacements:
                     if event.get("type") == "message" and "data" in event:
