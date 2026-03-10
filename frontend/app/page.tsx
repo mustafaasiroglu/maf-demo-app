@@ -137,7 +137,7 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  const llmModels = ['gpt-5.1-chat', 'gpt-5.1', 'gpt-5.2-mini'];
+  const llmModels = ['gpt-5.1-chat', 'gpt-5.1', 'gpt-5-mini'];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
