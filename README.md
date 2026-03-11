@@ -4,6 +4,12 @@ Multi-agent investment asistant solution built with **Microsoft Agent Framework*
 
 Uses Azure OpenAI models (GPT-5.1) with function calling, multi-agent handoff (Workflow), and OpenTelemetry instrumentation provided by the framework.
 
+## Screenshots
+
+| Home | Chat | Settings |
+|------|------|----------|
+| ![Home](docs/screenshots/home.png) | ![Chat](docs/screenshots/chat.png) | ![Settings](docs/screenshots/settings.png) |
+
 ## Tech Stack
 
 | Layer | Technology |
