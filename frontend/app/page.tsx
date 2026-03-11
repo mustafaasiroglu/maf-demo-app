@@ -130,6 +130,7 @@ export default function Home() {
   const [selectedModel, setSelectedModel] = useState('gpt-5.1-chat');
   const [piiMaskingEnabled, setPiiMaskingEnabled] = useState(false);
   const [language, setLanguage] = useState<Language>('tr');
+  const [colorTheme, setColorTheme] = useState<'green' | 'red' | 'navy' | 'gray'>('green');
   const t = getTranslations(language);
   const [sessionId] = useState<string>(() => generateSessionId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -164,6 +165,10 @@ export default function Home() {
     const savedLang = localStorage.getItem('language') as Language | null;
     if (savedLang && (savedLang === 'tr' || savedLang === 'en')) {
       setLanguage(savedLang);
+    }
+    const savedColor = localStorage.getItem('colorTheme') as 'green' | 'red' | 'navy' | 'gray' | null;
+    if (savedColor && ['green', 'red', 'navy', 'gray'].includes(savedColor)) {
+      setColorTheme(savedColor);
     }
   }, []);
 
@@ -420,7 +425,7 @@ export default function Home() {
   };
 
   return (
-    <div id="print-root" className={`flex flex-col h-screen ${isDarkMode ? 'dark bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg' : 'bg-gradient-to-br from-white via-primary/5 to-white'}`}>
+    <div id="print-root" data-color={colorTheme} className={`flex flex-col h-screen ${isDarkMode ? 'dark bg-gradient-to-br from-dark-bg via-dark-surface to-dark-bg' : 'bg-gradient-to-br from-white via-primary/5 to-white'}`}>
       {/* Header */}
       <header id="print-header" className="bg-primary text-white p-4 shadow-md flex-shrink-0">
         <div className="container mx-auto flex justify-between items-center">
@@ -461,71 +466,70 @@ export default function Home() {
         id="print-settings-panel"
         className={`fixed top-0 right-0 h-full w-80 z-50 transform transition-transform duration-300 ease-in-out ${isSettingsOpen ? 'translate-x-0' : 'translate-x-full'} ${isDarkMode ? 'bg-dark-surface' : 'bg-white'} shadow-2xl`}
       >
-        <div className="p-6 h-full flex flex-col">
+        <div className="p-4 h-full flex flex-col overflow-y-auto">
           {/* Panel Header */}
-          <div className="flex justify-between items-center mb-6">
-            <h2 className={`text-xl font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>{t.settingsTitle}</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className={`text-lg font-bold ${isDarkMode ? 'text-dark-text' : 'text-gray-800'}`}>{t.settingsTitle}</h2>
             <button
               onClick={() => setIsSettingsOpen(false)}
-              className={`p-2 rounded-lg hover:bg-gray-200 transition-colors ${isDarkMode ? 'hover:bg-dark-card text-dark-text' : ''}`}
+              className={`p-1.5 rounded-lg hover:bg-gray-200 transition-colors ${isDarkMode ? 'hover:bg-dark-card text-dark-text' : ''}`}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
 
           {/* PII Masking Toggle */}
-          <div className="mb-6">
-            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+          <div className="mb-4">
+            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
               {t.piiMaskingLabel}
             </label>
             <button
               onClick={() => { const next = !piiMaskingEnabled; setPiiMaskingEnabled(next); localStorage.setItem('piiMaskingEnabled', String(next)); }}
-              className={`w-full p-3 text-left rounded-lg border-2 transition-all duration-200 flex items-center justify-between ${
+              className={`w-full py-1.5 px-2 text-left text-sm rounded-md border transition-all duration-200 flex items-center justify-between ${
                 piiMaskingEnabled
                   ? isDarkMode
-                    ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                    ? 'border-accent bg-accent/10 text-accent font-semibold'
                     : 'border-primary bg-primary/10 text-primary font-semibold'
                   : isDarkMode
-                    ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                    ? 'border-accent/30 bg-dark-card text-accent-light hover:border-accent/60'
                     : 'border-gray-200 hover:border-primary/50'
               }`}
             >
-              <div className="flex items-center space-x-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center space-x-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
                 <span>{t.piiMaskingToggle}</span>
               </div>
-              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${
+              <div className={`w-7 h-4 rounded-full transition-colors duration-200 flex items-center ${
                 piiMaskingEnabled
-                  ? isDarkMode ? 'bg-emerald-400 justify-end' : 'bg-primary justify-end'
+                  ? isDarkMode ? 'bg-accent justify-end' : 'bg-primary justify-end'
                   : isDarkMode ? 'bg-dark-bg justify-start' : 'bg-gray-300 justify-start'
               }`}>
-                <div className="w-4 h-4 bg-white rounded-full mx-1 shadow-sm"></div>
+                <div className="w-3 h-3 bg-white rounded-full mx-0.5 shadow-sm"></div>
               </div>
             </button>
-
           </div>
 
           {/* LLM Model Selection */}
-          <div className="mb-6">
-            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+          <div className="mb-4">
+            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
               {t.llmModelLabel}
             </label>
-            <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
               {llmModels.map((model) => (
                 <button
                   key={model}
                   onClick={() => { setSelectedModel(model); localStorage.setItem('selectedModel', model); }}
-                  className={`w-full p-3 text-left rounded-lg border-2 transition-all duration-200 ${
+                  className={`px-3 py-1.5 text-sm rounded-md border transition-all duration-200 ${
                     selectedModel === model
                       ? isDarkMode
-                        ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                        ? 'border-accent bg-accent/10 text-accent font-semibold'
                         : 'border-primary bg-primary/10 text-primary font-semibold'
                       : isDarkMode 
-                        ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60' 
+                        ? 'border-accent/30 bg-dark-card text-accent-light hover:border-accent/60' 
                         : 'border-gray-200 hover:border-primary/50'
                   }`}
                 >
@@ -535,65 +539,81 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Theme Selection */}
-          <div className="mb-6">
-            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+          {/* Theme Selection: Colors + Mode */}
+          <div className="mb-4">
+            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
               {t.themeLabel}
             </label>
-            <div className="flex space-x-2">
+            <div className="flex items-center space-x-2">
+              {([
+                { key: 'green' as const, swatch: 'bg-[#00883d]' },
+                { key: 'red' as const, swatch: 'bg-[#C62828]' },
+                { key: 'navy' as const, swatch: 'bg-[#1A4B8C]' },
+                { key: 'gray' as const, swatch: 'bg-[#4A4A4A]' },
+              ]).map(({ key, swatch }) => (
+                <button
+                  key={key}
+                  onClick={() => { setColorTheme(key); localStorage.setItem('colorTheme', key); }}
+                  className={`w-8 h-8 rounded-full border-2 transition-all duration-200 ${swatch} ${
+                    colorTheme === key
+                      ? 'border-white ring-2 ring-primary scale-110'
+                      : isDarkMode
+                        ? 'border-dark-card hover:scale-110'
+                        : 'border-gray-200 hover:scale-110'
+                  }`}
+                  title={key}
+                />
+              ))}
+              <div className={`w-px h-6 mx-1 ${isDarkMode ? 'bg-dark-card' : 'bg-gray-300'}`} />
               <button
-                onClick={() => {
-                  setIsDarkMode(false);
-                  localStorage.setItem('theme', 'light');
-                }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                onClick={() => { setIsDarkMode(false); localStorage.setItem('theme', 'light'); }}
+                className={`w-8 h-8 rounded-full border-2 transition-all duration-200 flex items-center justify-center ${
                   !isDarkMode
-                    ? 'border-primary bg-primary/10 text-primary font-semibold'
-                    : 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                    ? 'border-white ring-2 ring-primary scale-110 bg-amber-100 text-amber-600'
+                    : isDarkMode
+                      ? 'border-dark-card bg-dark-bg text-dark-muted hover:scale-110'
+                      : 'border-gray-200 bg-gray-100 text-gray-500 hover:scale-110'
                 }`}
+                title={t.themeLight}
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z" />
                 </svg>
-                <span>{t.themeLight}</span>
               </button>
               <button
-                onClick={() => {
-                  setIsDarkMode(true);
-                  localStorage.setItem('theme', 'dark');
-                }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                onClick={() => { setIsDarkMode(true); localStorage.setItem('theme', 'dark'); }}
+                className={`w-8 h-8 rounded-full border-2 transition-all duration-200 flex items-center justify-center ${
                   isDarkMode
-                    ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
-                    : 'border-gray-200 hover:border-primary/50'
+                    ? 'border-white ring-2 ring-primary scale-110 bg-indigo-900 text-indigo-300'
+                    : 'border-gray-200 bg-gray-100 text-gray-500 hover:scale-110'
                 }`}
+                title={t.themeDark}
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
                 </svg>
-                <span>{t.themeDark}</span>
               </button>
             </div>
           </div>
 
           {/* Language Selection */}
-          <div className="mb-6">
-            <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+          <div className="mb-4">
+            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
               {t.languageLabel}
             </label>
-            <div className="flex space-x-2">
+            <div className="flex space-x-1.5">
               <button
                 onClick={() => {
                   setLanguage('tr');
                   localStorage.setItem('language', 'tr');
                 }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                className={`flex-1 py-1.5 rounded-md border text-sm transition-all duration-200 flex items-center justify-center space-x-1 ${
                   language === 'tr'
                     ? isDarkMode
-                      ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                      ? 'border-accent bg-accent/10 text-accent font-semibold'
                       : 'border-primary bg-primary/10 text-primary font-semibold'
                     : isDarkMode
-                      ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                      ? 'border-accent/30 bg-dark-card text-accent-light hover:border-accent/60'
                       : 'border-gray-200 hover:border-primary/50'
                 }`}
               >
@@ -605,13 +625,13 @@ export default function Home() {
                   setLanguage('en');
                   localStorage.setItem('language', 'en');
                 }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-all duration-200 flex items-center justify-center space-x-2 ${
+                className={`flex-1 py-1.5 rounded-md border text-sm transition-all duration-200 flex items-center justify-center space-x-1 ${
                   language === 'en'
                     ? isDarkMode
-                      ? 'border-emerald-400 bg-emerald-400/10 text-emerald-300 font-semibold'
+                      ? 'border-accent bg-accent/10 text-accent font-semibold'
                       : 'border-primary bg-primary/10 text-primary font-semibold'
                     : isDarkMode
-                      ? 'border-emerald-400/30 bg-dark-card text-emerald-200 hover:border-emerald-400/60'
+                      ? 'border-accent/30 bg-dark-card text-accent-light hover:border-accent/60'
                       : 'border-gray-200 hover:border-primary/50'
                 }`}
               >
@@ -629,7 +649,7 @@ export default function Home() {
         <div className="container mx-auto max-w-4xl">
           {messages.length === 0 && (
             <div className="text-center py-12">
-              <div className="text-primary text-6xl mb-4">🍀</div>
+              <div className="text-primary text-6xl mb-4">✨</div>
               <h2 className={`text-2xl font-semibold mb-4 ${isDarkMode ? 'text-primary-lighter' : 'text-primary'}`}>
                 {t.welcomeTitle}
               </h2>
@@ -658,7 +678,7 @@ export default function Home() {
           {(thinkingMessage || isLoading || streamingContent) && (
             <div className="flex items-start space-x-3">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white flex-shrink-0 ${isDarkMode ? 'bg-dark-card' : 'bg-primary'}`}>
-                🍀
+                ✨
               </div>
               <div className={`flex-1 max-w-[80%] rounded-lg p-4 ${isDarkMode ? 'bg-dark-surface' : 'bg-white'}`}>
                 {/* Show streaming content if available */}
@@ -818,7 +838,7 @@ function MessageBubble({ message, isDarkMode, t, language }: { message: Message;
     <div data-role={message.role} className={`flex ${isUser ? 'justify-end' : 'justify-start'} items-start space-x-3`}>
       {!isUser && (
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white flex-shrink-0 ${isDarkMode ? 'bg-dark-card' : 'bg-primary'}`}>
-          🍀
+          ✨
         </div>
       )}
       <div className={`flex-1 max-w-[80%] ${isUser ? 'order-first' : ''}`}>

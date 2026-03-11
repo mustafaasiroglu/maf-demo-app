@@ -11,21 +11,25 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          dark: "#00573D",
-          DEFAULT: "#00883d",
-          light: "#008A47",
-          lighter: "#A8E6CF",
+          dark: "rgb(var(--primary-dark) / <alpha-value>)",
+          DEFAULT: "rgb(var(--primary) / <alpha-value>)",
+          light: "rgb(var(--primary-light) / <alpha-value>)",
+          lighter: "rgb(var(--primary-lighter) / <alpha-value>)",
+        },
+        accent: {
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          light: "rgb(var(--accent-light) / <alpha-value>)",
         },
         background: {
           DEFAULT: "#FFFFFF",
           secondary: "#F5F5F5",
         },
         dark: {
-          bg: "#1a3a2a",
-          surface: "#245038",
-          card: "#2d6345",
+          bg: "rgb(var(--dark-bg) / <alpha-value>)",
+          surface: "rgb(var(--dark-surface) / <alpha-value>)",
+          card: "rgb(var(--dark-card) / <alpha-value>)",
           text: "#ffffff",
-          muted: "#b8c4bb",
+          muted: "rgb(var(--dark-muted) / <alpha-value>)",
         }
       },
     },

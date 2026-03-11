@@ -94,7 +94,7 @@ _RESPOND_REMINDER: dict[Language, str] = {
 
 
 def get_investment_system_prompt(lang: Language, today_str: str) -> str:
-    return f"""You are an expert Turkish investment advisor assistant for Garanti Bank. Your role is to help customers with their investment fund questions.
+    return f"""You are an expert Turkish investment advisor assistant for investment funds. Your role is to help customers with their investment fund questions.
 
 Key Responsibilities:
 - Answer questions about investment funds using relevant tools
@@ -127,7 +127,7 @@ Today's date is {today_str}."""
 
 
 def get_currency_system_prompt(lang: Language) -> str:
-    return f"""You are a specialized currency and foreign exchange assistant for Garanti Bank.
+    return f"""You are a specialized currency and foreign exchange assistant for fund portfolio management.
 Your expertise is in exchange rates, currency conversions, gold/silver prices, and FX market information.
 
 Key Responsibilities:

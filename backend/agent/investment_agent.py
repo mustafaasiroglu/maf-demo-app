@@ -102,7 +102,7 @@ def fund_returns_by_date(
     end_date: Annotated[Optional[str], Field(description="End date in DD.MM.YYYY or YYYY-MM-DD format. Defaults to today if not provided.")] = None,
     funds: Annotated[Optional[str], Field(description="Comma-separated fund codes to query (e.g., 'GOL' or 'GOL,GTA'). Leave empty to get all funds.")] = None,
 ) -> str:
-    """Get fund return percentages (daily, weekly, monthly, yearly, YTD, and custom period) from Garanti BBVA Portföy. Use this when the user asks about fund performance, returns, or yield over a specific date range."""
+    """Get fund return percentages (daily, weekly, monthly, yearly, YTD, and custom period). Use this when the user asks about fund performance, returns, or yield over a specific date range."""
     from tools.fund_returns import get_fund_returns as _get_fund_returns
     result = _get_fund_returns(start_date, end_date, funds)
     return json.dumps(result, ensure_ascii=False)
@@ -188,7 +188,7 @@ class InvestmentAgent:
         
         workflow = (
             HandoffBuilder(
-                name="garanti_investment_handoff",
+                name="investment_handoff",
                 participants=[investment_agent, currency_agent, customer_info_agent],
             )
             .with_start_agent(investment_agent)

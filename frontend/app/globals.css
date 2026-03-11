@@ -2,6 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ========== Color Theme Variables ========== */
+/* RGB triplets for Tailwind opacity support */
+
+:root, [data-color="green"] {
+  --primary-dark: 0 87 61;
+  --primary: 0 136 61;
+  --primary-light: 0 138 71;
+  --primary-lighter: 168 230 207;
+  --accent: 52 211 153;
+  --accent-light: 167 243 208;
+  --dark-bg: 26 58 42;
+  --dark-surface: 36 80 56;
+  --dark-card: 45 99 69;
+  --dark-muted: 184 196 187;
+  --scrollbar-rgb: 0 104 55;
+}
+
+[data-color="red"] {
+  --primary-dark: 139 26 26;
+  --primary: 198 40 40;
+  --primary-light: 211 47 47;
+  --primary-lighter: 255 205 210;
+  --accent: 248 113 113;
+  --accent-light: 254 202 202;
+  --dark-bg: 42 26 26;
+  --dark-surface: 61 32 32;
+  --dark-card: 74 40 40;
+  --dark-muted: 196 184 184;
+  --scrollbar-rgb: 198 40 40;
+}
+
+[data-color="navy"] {
+  --primary-dark: 13 43 94;
+  --primary: 26 75 140;
+  --primary-light: 30 92 160;
+  --primary-lighter: 187 222 251;
+  --accent: 96 165 250;
+  --accent-light: 191 219 254;
+  --dark-bg: 15 23 41;
+  --dark-surface: 26 39 68;
+  --dark-card: 36 55 96;
+  --dark-muted: 184 188 196;
+  --scrollbar-rgb: 26 75 140;
+}
+
+[data-color="gray"] {
+  --primary-dark: 45 45 45;
+  --primary: 74 74 74;
+  --primary-light: 90 90 90;
+  --primary-lighter: 213 213 213;
+  --accent: 156 163 175;
+  --accent-light: 209 213 219;
+  --dark-bg: 26 26 26;
+  --dark-surface: 42 42 42;
+  --dark-card: 58 58 58;
+  --dark-muted: 184 184 184;
+  --scrollbar-rgb: 74 74 74;
+}
+
 /* Mobile viewport height fix */
 html {
   height: 100%;
@@ -33,12 +92,12 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 104, 55, 0.3);
+  background: rgb(var(--scrollbar-rgb) / 0.3);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 104, 55, 0.5);
+  background: rgb(var(--scrollbar-rgb) / 0.5);
 }
 
 /* Dark mode scrollbar */
@@ -53,7 +112,7 @@ code {
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 104, 55, 0.3) transparent;
+  scrollbar-color: rgb(var(--scrollbar-rgb) / 0.3) transparent;
 }
 
 .dark * {
@@ -94,7 +153,7 @@ code {
   /* Style header for print */
   #print-header {
     position: static !important;
-    background: #006837 !important;
+    background: rgb(var(--primary)) !important;
     color: white !important;
     padding: 12px 16px !important;
     margin-bottom: 8px !important;

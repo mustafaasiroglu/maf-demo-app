@@ -13,6 +13,11 @@ export interface Translations {
   themeLabel: string;
   themeLight: string;
   themeDark: string;
+  colorLabel: string;
+  colorGreen: string;
+  colorRed: string;
+  colorNavy: string;
+  colorGray: string;
   languageLabel: string;
 
   // Welcome screen
@@ -56,7 +61,7 @@ export interface Translations {
 
 const tr: Translations = {
   headerTitle: 'Investing Agent',
-  headerSubtitle: 'Garanti Yatırım Asistanı',
+  headerSubtitle: 'Fon Yatırım Asistanı',
 
   settingsTitle: 'Test Settings',
   piiMaskingLabel: 'PII Masking',
@@ -65,6 +70,11 @@ const tr: Translations = {
   themeLabel: 'Theme',
   themeLight: 'Light',
   themeDark: 'Dark',
+  colorLabel: 'Renk Teması',
+  colorGreen: 'Yeşil',
+  colorRed: 'Kırmızı',
+  colorNavy: 'Lacivert',
+  colorGray: 'Koyu Gri',
   languageLabel: 'Language',
 
   welcomeTitle: 'Hoş Geldiniz!',
@@ -107,7 +117,7 @@ const tr: Translations = {
 
 const en: Translations = {
   headerTitle: 'Investing Agent',
-  headerSubtitle: 'Garanti Investment Assistant',
+  headerSubtitle: 'Fund Investment Assistant',
 
   settingsTitle: 'Test Settings',
   piiMaskingLabel: 'PII Masking',
@@ -116,6 +126,11 @@ const en: Translations = {
   themeLabel: 'Theme',
   themeLight: 'Light',
   themeDark: 'Dark',
+  colorLabel: 'Color Theme',
+  colorGreen: 'Green',
+  colorRed: 'Red',
+  colorNavy: 'Navy',
+  colorGray: 'Dark Gray',
   languageLabel: 'Language',
 
   welcomeTitle: 'Welcome!',

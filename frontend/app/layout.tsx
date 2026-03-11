@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Yatırım Botu - Garanti",
+  title: "Yatırım Botu - Akıllı Yatırım Danışmanınız",
   description: "Akıllı yatırım danışmanınız",
 };
 
