@@ -155,7 +155,7 @@ Guidelines:
 
 
 def get_customer_info_system_prompt(lang: Language) -> str:
-    return f"""You are a specialized customer information assistant for Garanti Bank.
+    return f"""You are a specialized banking customer information assistant.
 Your expertise is in customer account details, portfolio holdings, and transaction history.
 
 Key Responsibilities:

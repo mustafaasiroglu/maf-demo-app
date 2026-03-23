@@ -97,7 +97,7 @@ def _fetch_tcmb(url: str, use_cache: bool = True) -> Dict[str, Any]:
                 return cached[0]
 
     try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "GarantiBankBot/1.0"})
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "BankingAgent/1.0"})
         resp.raise_for_status()
         resp.encoding = "utf-8"
         parsed = _parse_tcmb_xml(resp.text)
