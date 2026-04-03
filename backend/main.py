@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from typing import List, Dict, Any
 import asyncio
 import json
+import requests as http_requests
 from datetime import datetime
 from agent.investment_agent import InvestmentAgent
 from agent_framework import Workflow
@@ -238,6 +239,43 @@ async def distribution_history(request: DistributionHistoryRequest):
 async def get_current_user():
     """Get current logged-in user information."""
     return DUMMY_USER.to_dict()
+
+
+@app.get("/api/avatar/token")
+async def get_avatar_token():
+    """Fetch relay token and auth token for Azure TTS Avatar.
+    Proxied through backend to avoid CORS issues and keep keys server-side."""
+    speech_key = os.getenv("AZURE_SPEECH_KEY", "")
+    speech_region = os.getenv("AZURE_SPEECH_REGION", "")
+    if not speech_key or not speech_region:
+        raise HTTPException(status_code=500, detail="AZURE_SPEECH_KEY and AZURE_SPEECH_REGION not configured")
+
+    headers = {"Ocp-Apim-Subscription-Key": speech_key}
+
+    # 1. Relay token for WebRTC
+    relay_url = f"https://{speech_region}.tts.speech.microsoft.com/cognitiveservices/avatar/relay/token/v1"
+    try:
+        relay_res = http_requests.get(relay_url, headers=headers, timeout=10)
+        relay_res.raise_for_status()
+        relay_data = relay_res.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch relay token: {e}")
+
+    # 2. Auth token for Speech SDK (STT + TTS) so frontend doesn't need raw key
+    token_url = f"https://{speech_region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    try:
+        token_res = http_requests.post(token_url, headers=headers, timeout=10)
+        token_res.raise_for_status()
+        auth_token = token_res.text
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch auth token: {e}")
+
+    return {
+        "relay": relay_data,
+        "authToken": auth_token,
+        "region": speech_region,
+    }
+
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PriceChart from './PriceChart';
 import { Language, getTranslations } from './i18n';
+import AvatarPanel, { AvatarPanelHandle } from './AvatarPanel';
 
 function ColoredJson({ data, isDarkMode }: { data: any; isDarkMode: boolean }) {
   const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -117,6 +118,8 @@ const generateSessionId = () => {
   return `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 };
 
+const SENTENCE_PUNCTUATIONS = ['.', '?', '!', ':', ';', '\u3002', '\uFF1F', '\uFF01', '\uFF1A', '\uFF1B'];
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -137,6 +140,33 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
+
+  // Avatar state
+  const [showAvatar, setShowAvatar] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState<string>('lisa');
+  const avatarOptions: Record<string, { character: string; style: string; photo: boolean; label: string }> = {
+    lisa: { character: 'lisa', style: 'casual-sitting', photo: false, label: 'Lisa (Casual)' },
+    meg: { character: 'meg', style: 'business', photo: false, label: 'Meg (Business)' },
+    camila: { character: 'camila', style: '', photo: true, label: 'Camila (Photo)' },
+    carlos: { character: 'carlos', style: '', photo: true, label: 'Carlos (Photo)' },
+  };
+  const avatarVoiceOptions: Record<string, { voice: string; label: string }> = {
+    thalita: { voice: 'pt-BR-Thalita:DragonHDLatestNeural', label: 'Thalita (Female)' },
+    francisca: { voice: 'pt-BR-FranciscaNeural', label: 'Francisca (Female)' },
+    antonio: { voice: 'pt-BR-AntonioNeural', label: 'Antonio (Male)' },
+    andrew: { voice: 'en-US-Andrew:DragonHDLatestNeural', label: 'Andrew (Male)' },
+    ava: { voice: 'en-US-Ava:DragonHDLatestNeural', label: 'Ava (Female)' },
+    emma: { voice: 'en-US-EmmaNeural', label: 'Emma (Female)' },
+  };
+  const [selectedAvatarVoice, setSelectedAvatarVoice] = useState<string>('thalita');
+  const avatarTtsVoice = avatarVoiceOptions[selectedAvatarVoice]?.voice || avatarVoiceOptions.thalita.voice;
+  const { character: avatarCharacter, style: avatarStyle, photo: usePhotoAvatar } = avatarOptions[selectedAvatar] || avatarOptions.lisa;
+  const avatarSttLocales = 'tr-TR,en-US,de-DE';
+  const avatarShowSubtitles = false;
+  const [avatarContinuousConversation, setAvatarContinuousConversation] = useState(true);
+  const [avatarSessionConnected, setAvatarSessionConnected] = useState(false);
+  const avatarRef = useRef<AvatarPanelHandle>(null);
+  const avatarPendingStart = useRef(false);
 
   const llmModels = ['gpt-5.1-chat', 'gpt-5.1', 'gpt-5-mini'];
 
@@ -170,6 +200,13 @@ export default function Home() {
     if (savedColor && ['green', 'red', 'navy', 'gray'].includes(savedColor)) {
       setColorTheme(savedColor);
     }
+    // Avatar preferences
+    const savedContinuous = localStorage.getItem('avatar_continuousConversation');
+    if (savedContinuous === 'false') setAvatarContinuousConversation(false);
+    const savedAvatar = localStorage.getItem('avatar_selected');
+    if (savedAvatar && ['lisa', 'meg', 'camila', 'carlos'].includes(savedAvatar)) setSelectedAvatar(savedAvatar);
+    const savedAvatarVoice = localStorage.getItem('avatar_selectedVoice');
+    if (savedAvatarVoice && ['thalita', 'francisca', 'antonio', 'andrew', 'ava', 'emma'].includes(savedAvatarVoice)) setSelectedAvatarVoice(savedAvatarVoice);
   }, []);
 
   // Focus input on page load
@@ -247,6 +284,44 @@ export default function Home() {
     setIsRecording(true);
   };
 
+  /* ---- Avatar handlers ---- */
+  const handleAvatarToggle = useCallback(() => {
+    if (showAvatar) {
+      avatarRef.current?.closeSession();
+      setShowAvatar(false);
+      setAvatarSessionConnected(false);
+    } else {
+      setShowAvatar(true);
+      avatarPendingStart.current = true;
+    }
+  }, [showAvatar]);
+
+  // Auto-start avatar session after panel mounts
+  useEffect(() => {
+    if (showAvatar && avatarPendingStart.current && avatarRef.current) {
+      avatarPendingStart.current = false;
+      avatarRef.current.startSession();
+    }
+  }, [showAvatar]);
+
+  const handleAvatarSessionChange = useCallback((active: boolean) => {
+    setAvatarSessionConnected(active);
+    if (active) {
+      // Proactively speak the welcome title + subtitle when avatar session first connects
+      setTimeout(() => {
+        avatarRef.current?.speak(t.welcomeTitle);
+        avatarRef.current?.speak(t.welcomeSubtitle);
+      }, 500);
+    }
+    if (!active && showAvatar) {
+      setShowAvatar(false);
+    }
+  }, [showAvatar, t.welcomeTitle, t.welcomeSubtitle]);
+
+  const handleAvatarUserSpeech = useCallback((text: string) => {
+    handleSubmit(undefined, text);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async (e?: React.FormEvent, overrideMessage?: string) => {
     e?.preventDefault();
     const messageText = overrideMessage || input;
@@ -299,6 +374,7 @@ export default function Home() {
       let messageDebug: any = null;
       const toolCallsData: any[] = [];
       let lineBuffer = '';
+      let avatarSentenceBuf = '';  // buffer for avatar TTS sentence splitting
 
       while (true) {
         const { done, value } = await reader.read();
@@ -323,6 +399,24 @@ export default function Home() {
                 setThinkingMessage(null);
                 accumulatedStreamContent += event.data.content;
                 setStreamingContent(prev => prev + event.data.content);
+
+                // Feed avatar TTS with sentence-level splitting
+                if (avatarRef.current?.sessionActive) {
+                  const token: string = event.data.content;
+                  avatarSentenceBuf += token;
+                  if (token === '\n' || token === '\n\n') {
+                    if (avatarSentenceBuf.trim()) avatarRef.current.speak(avatarSentenceBuf);
+                    avatarSentenceBuf = '';
+                  } else if (token.length <= 2) {
+                    for (const p of SENTENCE_PUNCTUATIONS) {
+                      if (token.startsWith(p)) {
+                        if (avatarSentenceBuf.trim()) avatarRef.current.speak(avatarSentenceBuf);
+                        avatarSentenceBuf = '';
+                        break;
+                      }
+                    }
+                  }
+                }
               } else if (event.type === 'tool_call') {
                 const callId = event.debug?.call_id || `tool_${Date.now()}`;
                 setCurrentToolCalls(prev => [
@@ -380,6 +474,12 @@ export default function Home() {
         } catch (err) {
           console.error('Error parsing final SSE line:', err);
         }
+      }
+
+      // Flush remaining avatar sentence buffer
+      if (avatarRef.current?.sessionActive && avatarSentenceBuf.trim()) {
+        avatarRef.current.speak(avatarSentenceBuf);
+        avatarSentenceBuf = '';
       }
 
       // Safety net: if final message event was lost but we have streamed content, use it
@@ -641,9 +741,76 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Avatar Configuration */}
+          <div className={`mb-4 pt-4 border-t ${isDarkMode ? 'border-dark-card' : 'border-gray-200'}`}>
+            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-dark-text' : 'text-gray-700'}`}>
+              {t.avatarConfigTitle}
+            </label>
+            <div className="space-y-2">
+              <select
+                value={selectedAvatar}
+                onChange={e => { setSelectedAvatar(e.target.value); localStorage.setItem('avatar_selected', e.target.value); }}
+                className={`w-full py-1.5 px-2 text-sm rounded-md border transition-all duration-200 ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text' : 'border-gray-200'}`}
+              >
+                {Object.entries(avatarOptions).map(([key, opt]) => (
+                  <option key={key} value={key}>{opt.label}</option>
+                ))}
+              </select>
+              <label className={`block text-xs mt-2 mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>
+                {t.avatarVoiceLabel}
+              </label>
+              <select
+                value={selectedAvatarVoice}
+                onChange={e => { setSelectedAvatarVoice(e.target.value); localStorage.setItem('avatar_selectedVoice', e.target.value); }}
+                className={`w-full py-1.5 px-2 text-sm rounded-md border transition-all duration-200 ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text' : 'border-gray-200'}`}
+              >
+                {Object.entries(avatarVoiceOptions).map(([key, opt]) => (
+                  <option key={key} value={key}>{opt.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => { const next = !avatarContinuousConversation; setAvatarContinuousConversation(next); localStorage.setItem('avatar_continuousConversation', String(next)); }}
+                className={`w-full py-1.5 px-2 text-left text-sm rounded-md border transition-all duration-200 flex items-center justify-between ${
+                  avatarContinuousConversation
+                    ? isDarkMode ? 'border-accent bg-accent/10 text-accent font-semibold' : 'border-primary bg-primary/10 text-primary font-semibold'
+                    : isDarkMode ? 'border-accent/30 bg-dark-card text-accent-light hover:border-accent/60' : 'border-gray-200 hover:border-primary/50'
+                }`}
+              >
+                <span>{t.avatarContinuousConversation}</span>
+                <div className={`w-7 h-4 rounded-full transition-colors duration-200 flex items-center ${
+                  avatarContinuousConversation ? isDarkMode ? 'bg-accent justify-end' : 'bg-primary justify-end' : isDarkMode ? 'bg-dark-bg justify-start' : 'bg-gray-300 justify-start'
+                }`}><div className="w-3 h-3 bg-white rounded-full mx-0.5 shadow-sm"></div></div>
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
 
+      {/* Main content area - splits when avatar active */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Avatar Panel (left side) */}
+        {showAvatar && (
+          <div className={`w-[400px] flex-shrink-0 border-r overflow-auto flex flex-col justify-center ${isDarkMode ? 'border-dark-card bg-dark-surface' : 'border-gray-200 bg-gray-50'}`}>
+            <AvatarPanel
+              ref={avatarRef}
+              ttsVoice={avatarTtsVoice}
+              avatarCharacter={avatarCharacter}
+              avatarStyle={avatarStyle}
+              sttLocales={avatarSttLocales}
+              usePhotoAvatar={usePhotoAvatar}
+              showSubtitles={avatarShowSubtitles}
+              continuousConversation={avatarContinuousConversation}
+              language={language}
+              isDarkMode={isDarkMode}
+              t={t}
+              onUserSpeech={handleAvatarUserSpeech}
+              onSessionChange={handleAvatarSessionChange}
+            />
+          </div>
+        )}
+        {/* Chat area */}
+        <div className="flex-1 flex flex-col min-w-0">
       {/* Messages Container */}
       <div id="print-messages" className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="container mx-auto max-w-4xl">
@@ -727,7 +894,7 @@ export default function Home() {
       </div>
 
       {/* Input Container */}
-      <div id="print-input" className={`sticky bottom-0 border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>
+      <div id="print-input" className={`border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>
         <div className="container mx-auto max-w-4xl">
           <form onSubmit={handleSubmit} className="flex space-x-3">
             <div className="flex-1 relative">
@@ -738,8 +905,25 @@ export default function Home() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={t.inputPlaceholder}
                 disabled={isLoading}
-                className={`w-full p-3 pr-12 border-2 rounded-lg focus:outline-none focus:border-primary disabled:cursor-not-allowed ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text placeholder-dark-muted disabled:bg-dark-card' : 'border-primary/20 disabled:bg-gray-100'}`}
+                className={`w-full p-3 pr-20 border-2 rounded-lg focus:outline-none focus:border-primary disabled:cursor-not-allowed ${isDarkMode ? 'bg-dark-bg border-dark-card text-dark-text placeholder-dark-muted disabled:bg-dark-card' : 'border-primary/20 disabled:bg-gray-100'}`}
               />
+              {/* Avatar toggle button */}
+              <button
+                type="button"
+                onClick={handleAvatarToggle}
+                className={`absolute right-10 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-colors duration-200 ${
+                  showAvatar
+                    ? 'bg-primary text-white'
+                    : isDarkMode
+                      ? 'text-dark-muted hover:text-dark-text hover:bg-dark-card'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+                title={showAvatar ? t.avatarCloseSession : t.avatarNavLabel}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={handleMicClick}
@@ -796,6 +980,8 @@ export default function Home() {
           </form>
         </div>
       </div>
+        </div>{/* chat column */}
+      </div>{/* split wrapper */}
     </div>
   );
 }

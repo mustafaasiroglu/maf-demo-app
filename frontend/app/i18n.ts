@@ -44,6 +44,33 @@ export interface Translations {
   actionShowDetails: string;
   actionHideDetails: string;
 
+  // Avatar page
+  avatarSubtitle: string;
+  avatarConfigTitle: string;
+  avatarRegionLabel: string;
+  avatarApiKeyLabel: string;
+  avatarTtsVoiceLabel: string;
+  avatarVoiceLabel: string;
+  avatarCharacterLabel: string;
+  avatarStyleLabel: string;
+  avatarSttLocalesLabel: string;
+  avatarShowSubtitles: string;
+  avatarContinuousConversation: string;
+  avatarUsePhotoAvatar: string;
+  avatarOpenSession: string;
+  avatarCloseSession: string;
+  avatarStartMic: string;
+  avatarStopMic: string;
+  avatarStopSpeaking: string;
+  avatarClearHistory: string;
+  avatarConnecting: string;
+  avatarSessionActive: string;
+  avatarSessionClosed: string;
+  avatarReconnecting: string;
+  avatarTypeMessage: string;
+  avatarBackToChat: string;
+  avatarNavLabel: string;
+
   // Debug panel
   debugResponseTimeline: string;
   debugAgent: string;
@@ -101,6 +128,32 @@ const tr: Translations = {
   actionShowDetails: 'Detayları Göster',
   actionHideDetails: 'Detayları Gizle',
 
+  avatarSubtitle: 'Sesli & Görüntülü Asistan',
+  avatarConfigTitle: 'Avatar Ayarları',
+  avatarRegionLabel: 'Azure Speech Bölge',
+  avatarApiKeyLabel: 'API Anahtarı',
+  avatarTtsVoiceLabel: 'TTS Sesi',
+  avatarVoiceLabel: 'Avatar Sesi',
+  avatarCharacterLabel: 'Avatar Karakter',
+  avatarStyleLabel: 'Avatar Stil',
+  avatarSttLocalesLabel: 'STT Dilleri',
+  avatarShowSubtitles: 'Altyazıları Göster',
+  avatarContinuousConversation: 'Sürekli Konuşma',
+  avatarUsePhotoAvatar: 'Photo Avatar Kullan',
+  avatarOpenSession: 'Avatar Oturumu Aç',
+  avatarCloseSession: 'Avatar Oturumu Kapat',
+  avatarStartMic: 'Mikrofonu Başlat',
+  avatarStopMic: 'Mikrofonu Durdur',
+  avatarStopSpeaking: 'Konuşmayı Durdur',
+  avatarClearHistory: 'Sohbeti Temizle',
+  avatarConnecting: 'Bağlanıyor...',
+  avatarSessionActive: 'Oturum Aktif',
+  avatarSessionClosed: 'Oturum Kapalı',
+  avatarReconnecting: 'Yeniden bağlanılıyor...',
+  avatarTypeMessage: 'Mesaj Yaz',
+  avatarBackToChat: 'Yazılı Sohbete Dön',
+  avatarNavLabel: 'Avatar Asistan',
+
   debugResponseTimeline: 'Response Timeline:',
   debugAgent: 'Agent',
   debugStep: 'Step',
@@ -156,6 +209,32 @@ const en: Translations = {
   actionReadAloud: 'Read aloud',
   actionShowDetails: 'Show Details',
   actionHideDetails: 'Hide Details',
+
+  avatarSubtitle: 'Voice & Video Assistant',
+  avatarConfigTitle: 'Avatar Settings',
+  avatarRegionLabel: 'Azure Speech Region',
+  avatarApiKeyLabel: 'API Key',
+  avatarTtsVoiceLabel: 'TTS Voice',
+  avatarVoiceLabel: 'Avatar Voice',
+  avatarCharacterLabel: 'Avatar Character',
+  avatarStyleLabel: 'Avatar Style',
+  avatarSttLocalesLabel: 'STT Locales',
+  avatarShowSubtitles: 'Show Subtitles',
+  avatarContinuousConversation: 'Continuous Conversation',
+  avatarUsePhotoAvatar: 'Use Photo Avatar',
+  avatarOpenSession: 'Open Avatar Session',
+  avatarCloseSession: 'Close Avatar Session',
+  avatarStartMic: 'Start Microphone',
+  avatarStopMic: 'Stop Microphone',
+  avatarStopSpeaking: 'Stop Speaking',
+  avatarClearHistory: 'Clear Chat',
+  avatarConnecting: 'Connecting...',
+  avatarSessionActive: 'Session Active',
+  avatarSessionClosed: 'Session Closed',
+  avatarReconnecting: 'Reconnecting...',
+  avatarTypeMessage: 'Type Message',
+  avatarBackToChat: 'Back to Text Chat',
+  avatarNavLabel: 'Avatar Assistant',
 
   debugResponseTimeline: 'Response Timeline:',
   debugAgent: 'Agent',
