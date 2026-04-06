@@ -69,6 +69,7 @@ const AvatarPanel = forwardRef<AvatarPanelHandle, Props>(function AvatarPanel(pr
   const onSessionChangeRef = useRef(onSessionChange);
   onSessionChangeRef.current = onSessionChange;
   const showSubtitlesRef = useRef(showSubtitles);
+  //test
   showSubtitlesRef.current = showSubtitles;
 
   useEffect(() => { return () => { disconnectAvatar(); }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
