@@ -143,24 +143,25 @@ export default function Home() {
 
   // Avatar state
   const [showAvatar, setShowAvatar] = useState(false);
-  const [selectedAvatar, setSelectedAvatar] = useState<string>('lisa');
+  const [selectedAvatar, setSelectedAvatar] = useState<string>('camila');
   const avatarOptions: Record<string, { character: string; style: string; photo: boolean; label: string }> = {
-    lisa: { character: 'lisa', style: 'casual-sitting', photo: false, label: 'Lisa (Casual)' },
-    meg: { character: 'meg', style: 'business', photo: false, label: 'Meg (Business)' },
-    camila: { character: 'camila', style: '', photo: true, label: 'Camila (Photo)' },
-    carlos: { character: 'carlos', style: '', photo: true, label: 'Carlos (Photo)' },
+    lisa: { character: 'lisa', style: 'casual-sitting', photo: false, label: 'Lisa Casual (Video Avatar)' },
+    meg: { character: 'meg', style: 'business', photo: false, label: 'Meg Business (Video Avatar)' },
+    camila: { character: 'camila', style: '', photo: true, label: 'Camila (Photo Avatar)' },
+    carlos: { character: 'carlos', style: '', photo: true, label: 'Carlos (Photo Avatar)' },
+    adrian: { character: 'adrian', style: '', photo: true, label: 'Adrian (Photo Avatar)' },
   };
   const avatarVoiceOptions: Record<string, { voice: string; label: string }> = {
-    thalita: { voice: 'pt-BR-Thalita:DragonHDLatestNeural', label: 'Thalita (Female)' },
-    francisca: { voice: 'pt-BR-FranciscaNeural', label: 'Francisca (Female)' },
-    antonio: { voice: 'pt-BR-AntonioNeural', label: 'Antonio (Male)' },
-    andrew: { voice: 'en-US-Andrew:DragonHDLatestNeural', label: 'Andrew (Male)' },
-    ava: { voice: 'en-US-Ava:DragonHDLatestNeural', label: 'Ava (Female)' },
-    emma: { voice: 'en-US-EmmaNeural', label: 'Emma (Female)' },
+    thalita: { voice: 'pt-BR-Thalita:DragonHDLatestNeural', label: 'Thalita HD (Female Voice)' },
+    francisca: { voice: 'pt-BR-FranciscaNeural', label: 'Francisca (Female Voice)' },
+    antonio: { voice: 'pt-BR-AntonioNeural', label: 'Antonio (Male Voice)' },
+    andrew: { voice: 'en-US-Andrew:DragonHDLatestNeural', label: 'Andrew (Male Voice)' },
+    ava: { voice: 'en-US-Ava:DragonHDLatestNeural', label: 'Ava (Female Voice)' },
+    emma: { voice: 'en-US-EmmaNeural', label: 'Emma (Female Voice)' },
   };
   const [selectedAvatarVoice, setSelectedAvatarVoice] = useState<string>('thalita');
   const avatarTtsVoice = avatarVoiceOptions[selectedAvatarVoice]?.voice || avatarVoiceOptions.thalita.voice;
-  const { character: avatarCharacter, style: avatarStyle, photo: usePhotoAvatar } = avatarOptions[selectedAvatar] || avatarOptions.lisa;
+  const { character: avatarCharacter, style: avatarStyle, photo: usePhotoAvatar } = avatarOptions[selectedAvatar] || avatarOptions.camila;
   const avatarSttLocales = 'tr-TR,en-US,de-DE';
   const avatarShowSubtitles = false;
   const [avatarContinuousConversation, setAvatarContinuousConversation] = useState(true);
@@ -307,16 +308,18 @@ export default function Home() {
   const handleAvatarSessionChange = useCallback((active: boolean) => {
     setAvatarSessionConnected(active);
     if (active) {
-      // Proactively speak the welcome title + subtitle when avatar session first connects
+      // Proactively speak a default greeting when avatar session first connects
       setTimeout(() => {
-        avatarRef.current?.speak(t.welcomeTitle);
-        avatarRef.current?.speak(t.welcomeSubtitle);
+        const greeting = language === 'tr'
+          ? 'Merhaba, size nasıl yardımcı olabilirim?'
+          : 'Hello, how can I help you?';
+        avatarRef.current?.speak(greeting);
       }, 500);
     }
     if (!active && showAvatar) {
       setShowAvatar(false);
     }
-  }, [showAvatar, t.welcomeTitle, t.welcomeSubtitle]);
+  }, [showAvatar, language]);
 
   const handleAvatarUserSpeech = useCallback((text: string) => {
     handleSubmit(undefined, text);
@@ -756,9 +759,6 @@ export default function Home() {
                   <option key={key} value={key}>{opt.label}</option>
                 ))}
               </select>
-              <label className={`block text-xs mt-2 mb-1 ${isDarkMode ? 'text-dark-muted' : 'text-gray-500'}`}>
-                {t.avatarVoiceLabel}
-              </label>
               <select
                 value={selectedAvatarVoice}
                 onChange={e => { setSelectedAvatarVoice(e.target.value); localStorage.setItem('avatar_selectedVoice', e.target.value); }}
@@ -787,33 +787,33 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Main content area - splits when avatar active */}
+      {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Avatar Panel (left side) */}
-        {showAvatar && (
-          <div className={`w-[400px] flex-shrink-0 border-r overflow-auto flex flex-col justify-center ${isDarkMode ? 'border-dark-card bg-dark-surface' : 'border-gray-200 bg-gray-50'}`}>
-            <AvatarPanel
-              ref={avatarRef}
-              ttsVoice={avatarTtsVoice}
-              avatarCharacter={avatarCharacter}
-              avatarStyle={avatarStyle}
-              sttLocales={avatarSttLocales}
-              usePhotoAvatar={usePhotoAvatar}
-              showSubtitles={avatarShowSubtitles}
-              continuousConversation={avatarContinuousConversation}
-              language={language}
-              isDarkMode={isDarkMode}
-              t={t}
-              onUserSpeech={handleAvatarUserSpeech}
-              onSessionChange={handleAvatarSessionChange}
-            />
-          </div>
-        )}
-        {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex justify-center overflow-hidden">
+        <div className={`w-full max-w-4xl flex ${showAvatar ? 'gap-4' : ''} px-4`}>
+          {showAvatar && (
+            <div className={`w-1/3 flex-shrink-0 flex items-center border-r ${isDarkMode ? 'border-dark-card' : 'border-gray-200'}`}>
+              <AvatarPanel
+                ref={avatarRef}
+                ttsVoice={avatarTtsVoice}
+                avatarCharacter={avatarCharacter}
+                avatarStyle={avatarStyle}
+                sttLocales={avatarSttLocales}
+                usePhotoAvatar={usePhotoAvatar}
+                showSubtitles={avatarShowSubtitles}
+                continuousConversation={avatarContinuousConversation}
+                language={language}
+                isDarkMode={isDarkMode}
+                t={t}
+                onUserSpeech={handleAvatarUserSpeech}
+                onSessionChange={handleAvatarSessionChange}
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0 overflow-hidden">
       {/* Messages Container */}
-      <div id="print-messages" className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="container mx-auto max-w-4xl">
+      <div id="print-messages" className="h-full overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && (
             <div className="text-center py-12">
               <div className="text-primary text-6xl mb-4">✨</div>
@@ -890,8 +890,10 @@ export default function Home() {
           )}
 
           <div ref={messagesEndRef} />
-        </div>
       </div>
+          </div>{/* messages wrapper */}
+        </div>{/* max-w-4xl */}
+      </div>{/* centering flex */}
 
       {/* Input Container */}
       <div id="print-input" className={`border-t p-4 flex-shrink-0 ${isDarkMode ? 'bg-dark-surface border-dark-card' : 'bg-white'}`}>

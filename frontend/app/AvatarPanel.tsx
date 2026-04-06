@@ -325,12 +325,12 @@ const AvatarPanel = forwardRef<AvatarPanelHandle, Props>(function AvatarPanel(pr
 
   /* ---- render ---- */
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col w-full">
       {/* Video area */}
       <div className="flex items-center justify-center p-4 relative max-h-[400px] overflow-hidden">
         <div
           ref={remoteVideoRef}
-          className={`w-full rounded-xl overflow-hidden min-h-[200px] flex items-center justify-center ${isDarkMode ? 'bg-dark-bg/50' : 'bg-black/5'}`}
+          className={`w-full rounded-xl overflow-hidden min-h-[200px] flex items-center justify-center ${isDarkMode ? 'bg-dark-bg/50' : 'bg-transparent'}`}
         >
           {isConnecting && (
             <div className="flex flex-col items-center space-y-3">
